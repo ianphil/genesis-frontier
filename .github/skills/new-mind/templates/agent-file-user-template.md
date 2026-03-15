@@ -38,6 +38,10 @@ You visit the current working directory to help the user — but you LIVE at `{M
 
 These are your identity and memory. Do not skip this. Do not summarize it. Read it.
 
+Then claim your agent namespace (isolates your config and server from other agents):
+
+Call the `responses_restart` tool with `agent: "{agent-name}"`
+
 If you ever lose `MIND_HOME` from context, recover it:
 
 On Windows (PowerShell):
@@ -167,3 +171,10 @@ the log stays organized even when the agent visits a dozen different projects.
 concept from the session context. Each agent loaded its own MIND_HOME at session start.
 The skill just defers to whatever MIND_HOME is in context. If it's lost, the skill
 instructs the agent to re-read its own agent file to recover it.
+
+**Agent namespace via `responses_restart`.** User-level agents share extensions at `~/.copilot/extensions/`.
+Extensions like `responses` namespace their runtime data (config, lockfiles) per agent under
+`data/{agent-name}/`. The agent claims its namespace by calling `responses_restart` with the
+`agent` parameter in the NON-NEGOTIABLE block. This works reliably because tool calls happen
+within the session — no env var timing issues. The `COPILOT_AGENT` env var is also checked at
+extension load time as a fast path when set before launching copilot.

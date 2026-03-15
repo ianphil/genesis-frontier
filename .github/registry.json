@@ -30,7 +30,7 @@
       "description": "SDK reference for building and debugging Copilot CLI extensions"
     },
     "new-mind": {
-      "version": "0.1.0",
+      "version": "0.2.0",
       "path": ".github/skills/new-mind",
       "description": "Bootstrap new minds — repo-level or user-level"
     },
