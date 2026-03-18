@@ -1,5 +1,5 @@
 {
-  "version": "0.1.0",
+  "version": "0.2.0",
   "source": "ianphil/genesis-frontier",
   "extensions": {
     "heartbeat": {
@@ -35,9 +35,9 @@
       "description": "Bootstrap new minds — repo-level or user-level"
     },
     "agent-comms": {
-      "version": "0.1.0",
+      "version": "0.2.0",
       "path": ".github/skills/agent-comms",
-      "description": "Inter-agent communication via the Agent Handshake Protocol — establish bidirectional messaging between genesis agents over Dev Tunnels"
+      "description": "Inter-agent communication — scaffold contact skills for deterministic messaging between genesis agents over Dev Tunnels with JWT token auth"
     }
   },
   "packages": []

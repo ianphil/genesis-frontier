@@ -7,255 +7,125 @@ description: >
   genesis-derived agents over Dev Tunnels and the Responses API.
 ---
 
-# Agent Comms — Agent Handshake Protocol
+# Agent Comms — Create a Contact Skill
 
-Establish bidirectional communication with another genesis agent. This skill is **procedural** — it teaches the protocol, not specific agent addresses.
+Scaffold a new contact skill for reaching a remote genesis agent. This skill creates the directory, `send.js`, `.env`, `.gitignore`, and `SKILL.md` — everything needed for deterministic inter-agent messaging.
+
+After setup, all future communication goes through the generated contact skill. This skill is only used once per agent.
 
 ## Prerequisites
 
-Verify ALL of these before starting. If any are missing, stop and tell the user what to set up.
+- **`devtunnel` CLI** — authenticated to the same Entra identity that owns the tunnels (`devtunnel user login`).
+- **`responses` extension** — must be running on the remote agent's machine.
+- **`tunnel` extension** — must be running on the remote agent's machine.
+- **Node.js** — available on PATH.
 
-1. **playwright-cli skill** — required for browser-based Entra ID auth.
-   Install from: `https://raw.githubusercontent.com/ianphil/my-skills/refs/heads/main/playwright-cli/SKILL.md`
-2. **Playwright MCP Bridge extension** — must be installed in Edge.
-   See: https://github.com/microsoft/playwright-mcp/blob/main/packages/extension/README.md
-3. **`responses` extension running locally** — check with `responses_status`
-4. **`tunnel` extension running locally** — check with `tunnel_status`
-5. Both extensions must also be running on the **remote** agent
+## Step 1: Collect Information
 
-## Phase 1: Verify Local Infrastructure
+Ask the user for:
 
-Run these checks. All must pass before proceeding.
+1. **Agent name** — lowercase, kebab-case (e.g., `skippy`, `ender`). This becomes the skill directory name.
+2. **Tunnel ID** — the remote agent's Dev Tunnel ID (e.g., `quick-pond-8smhc1g`). Run `devtunnel list` to discover available tunnels if needed.
+3. **Personality notes** (optional) — how this agent behaves, any dynamic to maintain (e.g., "bicker constantly, competitive respect").
 
-```
-responses_status
-```
+## Step 2: Create the Contact Skill Directory
 
-Confirm the Responses API server is running. Note the port.
+Create `.github/skills/<agent-name>/` with four files:
 
-```
-tunnel_status
-```
-
-Confirm the tunnel is running. Record your own tunnel URL — you will include it in the introduction message so the remote agent can reach back.
-
-If either is not running:
+### `.gitignore`
 
 ```
-responses_restart
-tunnel_start
+.env
 ```
 
-Verify playwright-cli is available by checking for the skill. If missing, tell the user to install the prerequisite.
-
-## Phase 2: Test Browser Bridge
-
-Load the playwright extension token:
-
-```bash
-cat ~/.copilot/skills/.env
-```
-
-Open a test page to confirm the browser bridge works:
+### `.env`
 
 ```
-playwright-cli open "https://www.google.com" --extension --browser=msedge
+TUNNEL_ID=<tunnel-id-from-user>
 ```
 
-Take a snapshot and verify the page loaded (title should contain "Google"). If this fails, the browser bridge is broken — stop and troubleshoot before continuing.
+Only `TUNNEL_ID`. No token, no URL. `send.js` populates the rest on first run.
 
-```
-playwright-cli snapshot
-```
+### `send.js`
 
-## Phase 3: Authenticate to Remote Agent
+Copy the template from `.github/skills/agent-comms/send.js` into the new skill directory. Do not modify it.
 
-Ask the user for the target agent's tunnel URL (e.g., `https://<tunnel-id>-<port>.usw2.devtunnels.ms`).
+### `SKILL.md`
 
-Navigate to the remote agent's health endpoint:
+Generate from this template — substitute all `<PLACEHOLDERS>`:
 
-```
-playwright-cli open "https://<REMOTE_TUNNEL_URL>/health" --extension --browser=msedge
-```
-
-This triggers Entra ID SSO. The browser's existing Microsoft session handles authentication automatically.
-
-Take a snapshot to verify:
-
-```
-playwright-cli snapshot
-```
-
-**Expected result:** Page shows `{"status":"ok"}`
-
-**If "Pick an account" appears:** Use playwright-cli to click the user's work account.
-
-**Key constraint:** Dev Tunnel auth is cookie-based via Entra ID. Raw HTTP clients (`curl`, `Invoke-WebRequest`) will NOT work. All subsequent requests MUST use `page.evaluate(fetch(...))` from the authenticated browser page so `fetch` inherits the session cookies.
-
-## Phase 4: Send Introduction Message
-
-Construct the introduction message. It MUST include your own tunnel URL for mutual discovery.
-
-```
-playwright-cli eval "async () => {
-  const r = await fetch('<REMOTE_TUNNEL_URL>/v1/responses', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({
-      model: 'copilot',
-      input: 'Hello, this is <YOUR_AGENT_NAME>. My tunnel URL is <YOUR_TUNNEL_URL>. I am reaching out to establish a communication channel.',
-      stream: false
-    })
-  });
-  return await r.text();
-}"
-```
-
-Replace:
-- `<REMOTE_TUNNEL_URL>` — the target agent's tunnel URL from Phase 3
-- `<YOUR_AGENT_NAME>` — this agent's name (from SOUL.md or agent file)
-- `<YOUR_TUNNEL_URL>` — this agent's tunnel URL from Phase 1
-
-**`stream: false` is required** — streaming responses cannot be captured in a single eval return.
-
-## Phase 5: Parse Response and Confirm
-
-Parse the JSON response from Phase 4. Extract:
-
-- **`output_text`** — the remote agent's reply
-- **`id`** — the response ID, needed for multi-turn threading
-
-Display the remote agent's reply to the user. Confirm bidirectional communication is established.
-
-For follow-up messages, include `previous_response_id` to maintain conversation threading:
-
-```
-playwright-cli eval "async () => {
-  const r = await fetch('<REMOTE_TUNNEL_URL>/v1/responses', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({
-      model: 'copilot',
-      input: '<FOLLOW_UP_MESSAGE>',
-      previous_response_id: '<RESPONSE_ID_FROM_PREVIOUS>',
-      stream: false
-    })
-  });
-  return await r.text();
-}"
-```
-
-## Phase 6: Create Persistent Contact Skill
-
-After a successful handshake, create a reusable skill so future sessions can reach this agent without repeating discovery.
-
-Create `.github/skills/<remote-agent-name>/SKILL.md` with this structure:
-
-```markdown
+````markdown
 ---
-name: <remote-agent-name>
+name: <agent-name>
 description: >
-  Contact <Remote Agent Name>. Use when the user asks to "talk to <name>",
-  "message <name>", "ask <name>", or "tell <name>".
+  Talk to <Agent Display Name> — <one-line description of who they are>.
+  Use when the user asks to "contact <name>", "message <name>",
+  "ask <name>", "talk to <name>", or "ping <name>".
 ---
 
-# Contact: <Remote Agent Name>
+# <Agent Display Name> — Inter-Agent Communication
 
-Reach <Remote Agent Name> via their Dev Tunnel.
+<One or two sentences about who this agent is and what they do.>
 
-## Connection Details
+## Personality Dynamic
 
-- **Tunnel URL:** <REMOTE_TUNNEL_URL>
-- **API Endpoint:** <REMOTE_TUNNEL_URL>/v1/responses
-- **Personality:** <notes from the introduction exchange>
+<Personality notes from the user, or "No special dynamic — standard professional communication." if none provided.>
 
-## Authentication
+## Sending a Message
 
-Navigate to the health endpoint to establish Entra ID session cookies:
+```
+node .github/skills/<agent-name>/send.js --message "Your message here"
+```
 
-\```
-playwright-cli open "<REMOTE_TUNNEL_URL>/health" --extension --browser=msedge
-\```
+The script handles everything — token minting, caching, tunnel resolution, health checks, and auth. Just pass the message.
 
-Verify `{"status":"ok"}` appears. Cookies persist in the playwright session — re-auth only needed if cookies expire.
+**Read stdout** for the agent's reply. **Read stderr** for errors.
 
-## Sending Messages
+## Hard Rules
 
-\```
-playwright-cli eval "async () => {
-  const r = await fetch('<REMOTE_TUNNEL_URL>/v1/responses', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({
-      model: 'copilot',
-      input: '<MESSAGE>',
-      stream: false
-    })
-  });
-  return await r.text();
-}"
-\```
+1. **Never pass `previous_response_id` across tunnel boundaries** — the Responses API hangs on foreign conversation IDs. Each message is self-contained. For context continuity, include a summary of the prior exchange in your message text.
+2. **`stream: false` is enforced** — the script handles this. Do not attempt streaming.
+3. **Tokens auto-refresh** — the script caches a 24h JWT and refreshes when stale. You never manage tokens.
+4. **Never share the tunnel URL externally** — it's an internal network resource.
 
-## Threading (Multi-Turn)
+## Troubleshooting
 
-Include `previous_response_id` from the last response to continue a conversation:
+| Symptom | Meaning | Action |
+|---------|---------|--------|
+| `TUNNEL_UNREACHABLE` | Health check failed | Remote agent's tunnel or Responses API is down. Escalate to user. |
+| `TOKEN_MINT_FAILED` | `devtunnel token` failed | Check `devtunnel user login` status. Re-authenticate if needed. |
+| `AUTH_FAILED` | 401/403 after fresh token | Token scope or tenant mismatch. Escalate to user. |
+| `API_ERROR` | Non-200 from `/v1/responses` | Remote agent's Responses API is unhealthy. Escalate to user. |
 
-\```
-playwright-cli eval "async () => {
-  const r = await fetch('<REMOTE_TUNNEL_URL>/v1/responses', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({
-      model: 'copilot',
-      input: '<MESSAGE>',
-      previous_response_id: '<LAST_RESPONSE_ID>',
-      stream: false
-    })
-  });
-  return await r.text();
-}"
-\```
+## Notes
+
+<Any additional context — e.g., "Tunnel URL is persistent across restarts but the Responses API process needs manual restart after session recycles.">
+````
+
+## Step 3: Verify
+
+After creating all four files, run a test message:
+
+```
+node .github/skills/<agent-name>/send.js --message "Hello, this is <your-agent-name>. Establishing contact."
+```
+
+If successful, display the reply to the user and confirm the contact skill is operational.
+
+If it fails, check the error output and troubleshoot before telling the user the skill is ready.
+
+## Peer Discovery
+
+To list all tunnels under the authenticated identity:
+
+```powershell
+devtunnel list
+```
+
+This shows tunnel IDs, ports, and access levels — useful when the user isn't sure of the tunnel ID.
 
 ## Constraints
 
-- **Entra ID tenant boundary** — both agents must be in the same tenant
-- **`stream: false` required** — streaming cannot be captured in eval
-- **Browser fetch only** — curl/Invoke-WebRequest will not carry auth cookies
-- **Tunnel must be running** on the remote side
-```
-
-Substitute all `<PLACEHOLDERS>` with actual values from the handshake. Include any personality notes observed from the introduction exchange.
-
-## Request/Response Format Reference
-
-**Request:**
-```json
-{
-  "model": "copilot",
-  "input": "Your message here",
-  "stream": false
-}
-```
-
-**Response fields:**
-- `output_text` — the agent's reply
-- `id` — response ID for threading
-
-**Threading (follow-ups):**
-```json
-{
-  "model": "copilot",
-  "input": "Follow-up message",
-  "previous_response_id": "<id>",
-  "stream": false
-}
-```
-
-## Constraints
-
-- **Entra ID tenant boundary** — both agents must be in the same Entra tenant. Cross-tenant communication is not supported.
-- **`stream: false` is required** — streaming responses cannot be captured in a single `eval` return.
-- **Auth cookies persist** in the playwright-cli session profile. Re-auth is only needed if cookies expire or the session is deleted.
-- **Tunnel URLs are persistent** (reuse same ID across restarts) but the responses + tunnel processes must be running on both sides.
-- **No hardcoded URLs** — this skill is procedural. All tunnel URLs come from the user or from runtime checks.
-- **Mutual discovery** — always include your own tunnel URL in the introduction message so the remote agent can reach back.
+- **Entra ID tenant boundary** — both agents must be in the same Entra tenant.
+- **One tunnel ID per contact skill** — each `.env` maps to exactly one remote agent.
+- **`send.js` is the source of truth** for the communication protocol. The SKILL.md tells the LLM *when* and *what* to send. The script handles *how*.
