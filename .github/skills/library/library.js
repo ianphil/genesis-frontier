@@ -583,7 +583,9 @@ function use(opts) {
   const targetDir = path.join(targetBase, name);
 
   // Download files
-  const treeMap = fetchTreeMap(srcOwner, srcRepo, "main");
+  const srcRepoInfo = gh(`/repos/${srcOwner}/${srcRepo}`);
+  const srcBranch = srcRepoInfo.default_branch || "main";
+  const treeMap = fetchTreeMap(srcOwner, srcRepo, srcBranch);
   const fileCount = downloadFiles(srcOwner, srcRepo, treeMap, item.path, targetDir);
 
   if (fileCount === 0) {
@@ -650,7 +652,9 @@ function push(opts) {
   }
 
   // Push via Git Data API
-  const ref = gh(`/repos/${targetOwner}/${targetRepo}/git/ref/heads/main`);
+  const targetRepoInfo = gh(`/repos/${targetOwner}/${targetRepo}`);
+  const targetBranch = targetRepoInfo.default_branch || "main";
+  const ref = gh(`/repos/${targetOwner}/${targetRepo}/git/ref/heads/${targetBranch}`);
   const commitSha = ref.object.sha;
   const commit = gh(`/repos/${targetOwner}/${targetRepo}/git/commits/${commitSha}`);
   const baseTreeSha = commit.tree.sha;
@@ -683,7 +687,7 @@ function push(opts) {
     parents: [commitSha],
   });
 
-  ghPatch(`/repos/${targetOwner}/${targetRepo}/git/refs/heads/main`, {
+  ghPatch(`/repos/${targetOwner}/${targetRepo}/git/refs/heads/${targetBranch}`, {
     sha: newCommit.sha,
   });
 
