@@ -873,7 +873,7 @@ function invite(agentName) {
       repo: cached.fleet_repo,
       from: path.basename(root),
     });
-    execSync(`node "${sendScript}" '${payload}'`, {
+    execSync(`node "${sendScript}" --message ${JSON.stringify(payload)}`, {
       encoding: "utf8",
       stdio: "pipe",
       timeout: 30000,
