@@ -451,8 +451,10 @@ function setup(repoStr) {
     { path: ".github/skills/library/library.js", content: libraryJs },
   ];
 
-  // Push files via Git Data API: get ref → get commit → create blobs → create tree → create commit → update ref
-  const ref = gh(`/repos/${owner}/${repo}/git/ref/heads/main`);
+  // Detect default branch and push files via Git Data API
+  const repoInfo = gh(`/repos/${owner}/${repo}`);
+  const defaultBranch = repoInfo.default_branch || "main";
+  const ref = gh(`/repos/${owner}/${repo}/git/ref/heads/${defaultBranch}`);
   const commitSha = ref.object.sha;
   const commit = gh(`/repos/${owner}/${repo}/git/commits/${commitSha}`);
   const baseTreeSha = commit.tree.sha;
@@ -482,9 +484,12 @@ function setup(repoStr) {
     parents: [commitSha],
   });
 
-  ghPatch(`/repos/${owner}/${repo}/git/refs/heads/main`, {
+  ghPatch(`/repos/${owner}/${repo}/git/refs/heads/${defaultBranch}`, {
     sha: newCommit.sha,
   });
+
+  // Cache catalog locally so subsequent commands work without re-fetching
+  writeCachedCatalog(catalogData);
 
   return {
     repo: repoStr,
