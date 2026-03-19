@@ -1,5 +1,5 @@
 {
-  "version": "0.4.0",
+  "version": "0.5.0",
   "source": "ianphil/genesis-frontier",
   "extensions": {
     "heartbeat": {
@@ -8,7 +8,7 @@
       "description": "Memory maintenance — consolidate session log to long-term memory, decay stale entries, reinforce active ones"
     },
     "code-exec": {
-      "version": "0.1.2",
+      "version": "0.2.0",
       "path": ".github/extensions/code-exec",
       "description": "Universal MCP connector — discover, call, and orchestrate enterprise tools with progressive disclosure"
     },
