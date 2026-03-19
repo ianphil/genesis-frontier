@@ -68,7 +68,13 @@ function findRepoRoot() {
     if (fs.existsSync(path.join(dir, ".github", "registry.json"))) return dir;
     dir = path.dirname(dir);
   }
-  return process.cwd();
+  return null;
+}
+
+function isUserScoped() {
+  const home = getUserHome();
+  const copilotDir = path.join(home, ".copilot");
+  return __filename.startsWith(copilotDir + path.sep);
 }
 
 function getSkillDir() {
@@ -573,14 +579,23 @@ function use(opts) {
     srcRepo = parsed.repo;
   }
 
-  // Determine target directory
+  // Determine target directory — scope-aware defaults
+  const userScoped = isUserScoped();
+  const effectiveGlobal = isGlobal || userScoped;
   const root = findRepoRoot();
+
+  if (!effectiveGlobal && !root) {
+    throw new Error(
+      "No repo found (no .github/registry.json in parent dirs). Use --global to install to ~/.copilot/skills/"
+    );
+  }
+
   let targetBase;
-  if (isGlobal) {
+  if (effectiveGlobal) {
     const globalDir = getGlobalDir(catalog, type);
     targetBase = globalDir.startsWith("/") || globalDir.match(/^[A-Z]:/i)
       ? globalDir
-      : path.join(root, globalDir);
+      : path.join(root || process.cwd(), globalDir);
   } else {
     targetBase = path.join(root, getDefaultDir(catalog, type));
   }
@@ -603,7 +618,8 @@ function use(opts) {
       name,
       type,
       files: fileCount,
-      target: isGlobal ? targetDir : path.join(getDefaultDir(catalog, type), name),
+      target: effectiveGlobal ? targetDir : path.join(getDefaultDir(catalog, type), name),
+      scope: effectiveGlobal ? "global" : "repo",
     },
     npmInstalled,
   };
@@ -639,10 +655,10 @@ function push(opts) {
 
   // Find local files
   const root = findRepoRoot();
-  const defaultDir = path.join(root, getDefaultDir(catalog, type), name);
+  const defaultDir = root ? path.join(root, getDefaultDir(catalog, type), name) : null;
   const globalDir = path.join(getGlobalDir(catalog, type), name);
   let localDir;
-  if (fs.existsSync(defaultDir)) {
+  if (defaultDir && fs.existsSync(defaultDir)) {
     localDir = defaultDir;
   } else if (fs.existsSync(globalDir)) {
     localDir = globalDir;
@@ -732,10 +748,10 @@ function remove(opts) {
   // Optionally delete local files
   let localDeleted = false;
   const root = findRepoRoot();
-  const defaultDir = path.join(root, getDefaultDir(catalog, type), name);
+  const defaultDir = root ? path.join(root, getDefaultDir(catalog, type), name) : null;
   const globalDir = path.join(getGlobalDir(catalog, type), name);
 
-  for (const dir of [defaultDir, globalDir]) {
+  for (const dir of [defaultDir, globalDir].filter(Boolean)) {
     if (fs.existsSync(dir)) {
       fs.rmSync(dir, { recursive: true, force: true });
       localDeleted = true;
@@ -769,11 +785,11 @@ function list() {
     const items = (catalog.library && catalog.library[section]) || [];
     for (const item of items) {
       const type = section === "skills" ? "skill" : "extension";
-      const defaultDir = path.join(root, getDefaultDir(catalog, type), item.name);
+      const defaultDir = root ? path.join(root, getDefaultDir(catalog, type), item.name) : null;
       const globalDir = path.join(getGlobalDir(catalog, type), item.name);
 
       let installed = false;
-      if (fs.existsSync(defaultDir)) installed = "default";
+      if (defaultDir && fs.existsSync(defaultDir)) installed = "default";
       else if (fs.existsSync(globalDir)) installed = "global";
 
       result[section].push({
@@ -806,12 +822,12 @@ function sync() {
     const items = (catalog.library && catalog.library[section]) || [];
     for (const item of items) {
       const type = section === "skills" ? "skill" : "extension";
-      const defaultDir = path.join(root, getDefaultDir(catalog, type), item.name);
+      const defaultDir = root ? path.join(root, getDefaultDir(catalog, type), item.name) : null;
       const globalDir = path.join(getGlobalDir(catalog, type), item.name);
 
       let isInstalled = false;
       let isGlobal = false;
-      if (fs.existsSync(defaultDir)) isInstalled = true;
+      if (defaultDir && fs.existsSync(defaultDir)) isInstalled = true;
       else if (fs.existsSync(globalDir)) { isInstalled = true; isGlobal = true; }
 
       if (!isInstalled) continue;
@@ -874,6 +890,9 @@ function invite(agentName) {
 
   // Look for contact skill
   const root = findRepoRoot();
+  if (!root) {
+    throw new Error("No repo found. Invite must be run from within a repo that has contact skills installed.");
+  }
   const sendScript = path.join(root, ".github", "skills", agentName, "send.js");
 
   if (!fs.existsSync(sendScript)) {

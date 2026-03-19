@@ -1,5 +1,5 @@
 {
-  "version": "0.3.3",
+  "version": "0.4.0",
   "source": "ianphil/genesis-frontier",
   "extensions": {
     "heartbeat": {
@@ -40,7 +40,7 @@
       "description": "Inter-agent communication — scaffold contact skills for deterministic messaging between genesis agents over Dev Tunnels with JWT token auth"
     },
     "library": {
-      "version": "0.1.3",
+      "version": "0.2.0",
       "path": ".github/skills/library",
       "description": "Fleet library — lateral skill sharing between agents via a shared private GitHub repo"
     }
