@@ -15,6 +15,11 @@
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
       "disabled": true
+    },
+    "bluebird-example": {
+      "command": "agency",
+      "args": ["mcp", "bluebird"],
+      "includeTools": ["search_code", "get_file_content", "list_directory"]
     }
   }
 }

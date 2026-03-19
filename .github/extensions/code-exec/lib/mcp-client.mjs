@@ -10,6 +10,24 @@ import { loadConfig, getEnabledServers } from "./config.mjs";
 import { normalizeFieldNames } from "./normalize-fields.mjs";
 import { formatError, isTransient } from "./errors.mjs";
 
+/**
+ * Test if a name matches any of the given glob patterns.
+ * Supports * (match any chars) and ? (match single char).
+ * @param {string} name
+ * @param {string[]} patterns
+ * @returns {boolean}
+ */
+function matchesAny(name, patterns) {
+  return patterns.some((pattern) => {
+    if (pattern === "*") return true;
+    const escaped = pattern
+      .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+      .replace(/\*/g, ".*")
+      .replace(/\?/g, ".");
+    return new RegExp(`^${escaped}$`).test(name);
+  });
+}
+
 class McpClientManager {
   /** @type {Map<string, import("@modelcontextprotocol/sdk/client/index.js").Client>} */
   #clients = new Map();
@@ -73,11 +91,20 @@ class McpClientManager {
     await client.connect(transport);
     this.#clients.set(name, client);
 
-    // Cache tool list
+    // Cache tool list, applying includeTools filter if configured
     const result = await client.listTools();
-    this.#toolCache.set(name, result.tools);
+    let tools = result.tools;
 
-    console.error(`[code-exec] Connected to ${name} (${result.tools.length} tools)`);
+    if (serverConfig.includeTools && Array.isArray(serverConfig.includeTools)) {
+      tools = tools.filter((t) => matchesAny(t.name, serverConfig.includeTools));
+      console.error(
+        `[code-exec] Connected to ${name} (${tools.length}/${result.tools.length} tools after includeTools filter)`
+      );
+    } else {
+      console.error(`[code-exec] Connected to ${name} (${tools.length} tools)`);
+    }
+
+    this.#toolCache.set(name, tools);
   }
 
   /**

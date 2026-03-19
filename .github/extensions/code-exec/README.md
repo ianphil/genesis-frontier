@@ -100,6 +100,7 @@ Each server in `mcpServers` supports:
 | `args` | No | Command arguments |
 | `env` | No | Extra environment variables |
 | `disabled` | No | Set `true` to skip without removing |
+| `includeTools` | No | Array of tool name patterns to expose. Supports `*` and `?` globs. Omit to expose all tools. |
 
 ### Tools
 
@@ -125,6 +126,28 @@ All servers connected       Servers connect on-demand
 Everything in context       Only what's needed
 350KB intermediate data     2KB final result (execute_script)
 ```
+
+## Tool Filtering
+
+Control which tools a server exposes with `includeTools`. This is useful when a server offers tools outside your agent's scope (e.g., wiki search on a code-focused agent).
+
+```json
+{
+  "mcpServers": {
+    "bluebird": {
+      "command": "agency",
+      "args": ["mcp", "bluebird"],
+      "includeTools": ["search_code", "get_file_content", "list_directory"]
+    }
+  }
+}
+```
+
+- **Omit `includeTools`**: all tools exposed (default, backward compatible)
+- **Explicit names**: `["search_code", "get_file_content"]` — only those tools
+- **Glob patterns**: `["search_*", "get_*"]` — wildcards with `*` (any chars) and `?` (single char)
+
+Filtered tools are hidden from `discover_data_sources` and rejected by `call_tool`. The filter applies at connection time — both discovery and execution paths respect it automatically.
 
 ## File Structure
 
