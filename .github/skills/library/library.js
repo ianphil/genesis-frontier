@@ -403,7 +403,11 @@ function setup(repoStr) {
   }
 
   if (exists) {
-    return { repo: repoStr, created: false, message: "Repository already exists" };
+    // Repo exists — fetch remote catalog and write locally so subsequent commands work
+    const { data } = fetchCatalog(owner, repo);
+    data.fleet_repo = repoStr;
+    writeCachedCatalog(data);
+    return { repo: repoStr, created: false, enrolled: true, message: "Enrolled in existing fleet library" };
   }
 
   // Create private repo with auto-init to get a default branch
