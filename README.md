@@ -33,6 +33,10 @@ Or ask your agent: *"install the frontier package"*
 | **new-mind** | 0.1.0 | Bootstrap new minds — repo-level or user-level |
 | **agent-comms** | 0.1.0 | Inter-agent communication via the Agent Handshake Protocol |
 
+### Prompts
+
+No prompts yet — the plumbing is in place for prompt distribution via the fleet library.
+
 ## Migrating from frontier branch
 
 If you were using `channel: "frontier"` in your genesis agent, run:

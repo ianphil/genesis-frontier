@@ -107,6 +107,7 @@ const REPO_DIRS = [
   ".github/agents",
   ".github/skills",
   ".github/extensions",
+  ".github/prompts",
 ];
 
 const USER_DIRS = [
@@ -324,6 +325,7 @@ function generateUserAgentFile(config) {
     `| SOUL.md | \`${mindHome}/SOUL.md\` |`,
     "| Skills | `~/.copilot/skills/` |",
     "| Extensions | `~/.copilot/extensions/` |",
+    "| Prompts | `~/.copilot/prompts/` |",
     "| Code changes, git commits for projects | Current working directory |",
     "",
     "Never write memory files to the current project repo.",
@@ -615,6 +617,7 @@ function generateMindIndex(config) {
       "- `~/.copilot/skills/new-mind/` — bootstrap new minds",
       "- `~/.copilot/extensions/cron/` — scheduled job execution",
       "- `~/.copilot/extensions/canvas/` — display HTML in browser",
+      "- `~/.copilot/prompts/` — reusable prompt templates",
       "- `~/.copilot/registry.json` — extension and skill version manifest",
     );
   } else {
@@ -629,6 +632,9 @@ function generateMindIndex(config) {
       "## Extensions",
       "- `.github/extensions/cron/` — scheduled job execution",
       "- `.github/extensions/canvas/` — display HTML in browser",
+      "",
+      "## Prompts",
+      "- `.github/prompts/` — reusable prompt templates",
     );
   }
 
@@ -640,6 +646,7 @@ function generateMindIndex(config) {
 
 const SKILLS_TO_COPY = ["commit", "daily-report", "upgrade", "new-mind"];
 const EXTENSIONS_TO_COPY = ["cron", "canvas"];
+const PROMPTS_TO_COPY = [];
 
 function copySkills(parentMind, destDir) {
   const copied = [];
@@ -662,6 +669,19 @@ function copyExtensions(parentMind, destDir) {
     if (fs.existsSync(src)) {
       copyDirRecursive(src, dest);
       copied.push(ext);
+    }
+  }
+  return copied;
+}
+
+function copyPrompts(parentMind, destDir) {
+  const copied = [];
+  for (const prompt of PROMPTS_TO_COPY) {
+    const src = path.join(parentMind, ".github", "prompts", prompt);
+    if (fs.existsSync(src)) {
+      fs.mkdirSync(destDir, { recursive: true });
+      fs.copyFileSync(src, path.join(destDir, prompt));
+      copied.push(prompt);
     }
   }
   return copied;
@@ -695,6 +715,15 @@ function generateRegistryObject(parentMind, layout) {
     };
   }
 
+  registry.prompts = {};
+  for (const [name, entry] of Object.entries(parentRegistry.prompts || {})) {
+    registry.prompts[name] = {
+      version: entry.version,
+      path: mapPathForLayout(entry.path, layout),
+      description: entry.description,
+    };
+  }
+
   return registry;
 }
 
@@ -711,8 +740,11 @@ function installSharedResources(parentMind, userCopilotDir) {
   for (const ext of EXTENSIONS_TO_COPY) {
     fs.mkdirSync(path.join(userCopilotDir, "extensions", ext), { recursive: true });
   }
+  if (PROMPTS_TO_COPY.length > 0) {
+    fs.mkdirSync(path.join(userCopilotDir, "prompts"), { recursive: true });
+  }
 
-  // Commit skill — use the user-level template instead of copying repo skill
+  // Commit skill— use the user-level template instead of copying repo skill
   const commitDest = path.join(userCopilotDir, "skills", "commit");
   const commitSkillPath = path.join(commitDest, "SKILL.md");
   if (!fs.existsSync(commitSkillPath)) {
@@ -746,6 +778,21 @@ function installSharedResources(parentMind, userCopilotDir) {
       log.push({ action: "installed", type: "extension", name: ext });
     } else {
       log.push({ action: "skipped", type: "extension", name: ext });
+    }
+  }
+
+  // Prompts
+  for (const prompt of PROMPTS_TO_COPY) {
+    const dest = path.join(userCopilotDir, "prompts", prompt);
+    if (!fs.existsSync(dest)) {
+      const src = path.join(parentMind, ".github", "prompts", prompt);
+      if (fs.existsSync(src)) {
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        fs.copyFileSync(src, dest);
+        log.push({ action: "installed", type: "prompt", name: prompt });
+      }
+    } else {
+      log.push({ action: "skipped", type: "prompt", name: prompt });
     }
   }
 
@@ -848,6 +895,10 @@ function createMind(config) {
     const copiedExts = copyExtensions(parentMind, extDest);
     result.files.push(...copiedExts.map((e) => ({ path: `.github/extensions/${e}/`, type: "directory" })));
 
+    const promptsDest = path.join(mindDir, ".github", "prompts");
+    const copiedPrompts = copyPrompts(parentMind, promptsDest);
+    result.files.push(...copiedPrompts.map((p) => ({ path: `.github/prompts/${p}`, type: "file" })));
+
     // 7. Generate registry (repo)
     const registry = generateRegistryObject(parentMind, "repo");
     fs.writeFileSync(
@@ -886,6 +937,7 @@ module.exports = {
   generateMindIndex,
   copySkills,
   copyExtensions,
+  copyPrompts,
   generateRegistryObject,
   installSharedResources,
   copyDirRecursive,
@@ -897,6 +949,7 @@ module.exports = {
   USER_DIRS,
   SKILLS_TO_COPY,
   EXTENSIONS_TO_COPY,
+  PROMPTS_TO_COPY,
   CREATIVE_BLOCK_FILES,
 };
 

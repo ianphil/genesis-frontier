@@ -45,5 +45,6 @@
       "description": "Fleet library — lateral skill sharing between agents via a shared private GitHub repo"
     }
   },
+  "prompts": {},
   "packages": []
 }
