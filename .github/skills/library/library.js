@@ -1,10 +1,10 @@
 #!/usr/bin/env node
-// library.js — Fleet library for sharing skills and extensions between agents.
+// library.js — Fleet library for sharing skills, extensions, and prompts between agents.
 // Zero dependencies. Requires: Node.js 18+, gh CLI authenticated.
 //
 // Usage:
 //   node library.js setup --repo <owner/fleet-library>
-//   node library.js add --name <n> --type <skill|extension> --source <owner/repo|fleet> --path <p> [--description <d>]
+//   node library.js add --name <n> --type <skill|extension|prompt> --source <owner/repo|fleet> --path <p> [--description <d>]
 //   node library.js use --name <n> [--global]
 //   node library.js push --name <n>
 //   node library.js remove --name <n>
@@ -68,13 +68,7 @@ function findRepoRoot() {
     if (fs.existsSync(path.join(dir, ".github", "registry.json"))) return dir;
     dir = path.dirname(dir);
   }
-  return null;
-}
-
-function isUserScoped() {
-  const home = getUserHome();
-  const copilotDir = path.join(home, ".copilot");
-  return __filename.startsWith(copilotDir + path.sep);
+  return process.cwd();
 }
 
 function getSkillDir() {
@@ -87,6 +81,46 @@ function getCachePath() {
 
 function getUserHome() {
   return process.env.HOME || process.env.USERPROFILE || "";
+}
+
+// ── Type system helpers ──────────────────────────────────────────────────────
+
+const VALID_TYPES = ["skill", "extension", "prompt"];
+const ALL_SECTIONS = ["skills", "extensions", "prompts"];
+
+function sectionForType(type) {
+  if (type === "skill") return "skills";
+  if (type === "extension") return "extensions";
+  if (type === "prompt") return "prompts";
+  throw new Error(`Invalid type "${type}". Use ${VALID_TYPES.map(t => `"${t}"`).join(", ")}.`);
+}
+
+function typeForSection(section) {
+  if (section === "skills") return "skill";
+  if (section === "extensions") return "extension";
+  if (section === "prompts") return "prompt";
+  throw new Error(`Unknown section "${section}".`);
+}
+
+function isFileType(type) {
+  return type === "prompt";
+}
+
+function defaultFallbackDir(type) {
+  if (type === "skill") return ".github/skills/";
+  if (type === "extension") return ".github/extensions/";
+  if (type === "prompt") return ".github/prompts/";
+  return ".github/skills/";
+}
+
+function globalFallbackDir(home, type) {
+  if (type === "prompt") return path.join(home, ".copilot", "prompts") + path.sep;
+  if (type === "extension") return path.join(home, ".copilot", "extensions") + path.sep;
+  return path.join(home, ".copilot", "skills") + path.sep;
+}
+
+function emptyLibrary() {
+  return { skills: [], extensions: [], prompts: [] };
 }
 
 // ── Minimal YAML parser/serializer ───────────────────────────────────────────
@@ -213,7 +247,7 @@ function serializeYaml(data) {
   // library section
   if (data.library) {
     lines.push("library:");
-    for (const section of ["skills", "extensions"]) {
+    for (const section of ALL_SECTIONS) {
       const items = data.library[section];
       if (!items || items.length === 0) {
         lines.push(`  ${section}: []`);
@@ -290,37 +324,33 @@ function getCatalog(owner, repo) {
 }
 
 function findItem(catalog, name) {
-  for (const section of ["skills", "extensions"]) {
+  for (const section of ALL_SECTIONS) {
     const items = (catalog.library && catalog.library[section]) || [];
     const found = items.find((item) => item.name === name);
-    if (found) return { item: found, type: section === "skills" ? "skill" : "extension" };
+    if (found) return { item: found, type: typeForSection(section) };
   }
   return null;
 }
 
 function getDefaultDir(catalog, type) {
   if (!catalog.default_dirs) {
-    return type === "skill" ? ".github/skills/" : ".github/extensions/";
+    return defaultFallbackDir(type);
   }
-  const section = type === "skill" ? "skills" : "extensions";
+  const section = sectionForType(type);
   return (catalog.default_dirs[section] && catalog.default_dirs[section].default) ||
-    (type === "skill" ? ".github/skills/" : ".github/extensions/");
+    defaultFallbackDir(type);
 }
 
 function getGlobalDir(catalog, type) {
   if (!catalog.default_dirs) {
-    const home = getUserHome();
-    return type === "skill"
-      ? path.join(home, ".copilot", "skills") + path.sep
-      : path.join(home, ".copilot", "extensions") + path.sep;
+    return globalFallbackDir(getUserHome(), type);
   }
-  const section = type === "skill" ? "skills" : "extensions";
+  const section = sectionForType(type);
   const dir = (catalog.default_dirs[section] && catalog.default_dirs[section].global) || "";
-  // Expand ~ to home dir
   if (dir.startsWith("~/") || dir.startsWith("~\\")) {
     return path.join(getUserHome(), dir.slice(2));
   }
-  return dir;
+  return dir || globalFallbackDir(getUserHome(), type);
 }
 
 // ── File download helpers ────────────────────────────────────────────────────
@@ -409,11 +439,7 @@ function setup(repoStr) {
   }
 
   if (exists) {
-    // Repo exists — fetch remote catalog and write locally so subsequent commands work
-    const { data } = fetchCatalog(owner, repo);
-    data.fleet_repo = repoStr;
-    writeCachedCatalog(data);
-    return { repo: repoStr, created: false, enrolled: true, message: "Enrolled in existing fleet library" };
+    return { repo: repoStr, created: false, message: "Repository already exists" };
   }
 
   // Create private repo with auto-init to get a default branch
@@ -421,7 +447,7 @@ function setup(repoStr) {
     name: repo,
     private: true,
     auto_init: true,
-    description: "Fleet library — shared skills and extensions for private agent fleet",
+    description: "Fleet library — shared skills, extensions, and prompts for private agent fleet",
   });
 
   // Build scaffolded files
@@ -430,14 +456,15 @@ function setup(repoStr) {
     default_dirs: {
       skills: { default: ".github/skills/", global: "~/.copilot/skills/" },
       extensions: { default: ".github/extensions/", global: "~/.copilot/extensions/" },
+      prompts: { default: ".github/prompts/", global: "~/.copilot/prompts/" },
     },
-    library: { skills: [], extensions: [] },
+    library: emptyLibrary(),
   };
 
   const readmeMd = [
     `# ${repo}`,
     "",
-    "Fleet library — shared skills and extensions for a private agent fleet.",
+    "Fleet library — shared skills, extensions, and prompts for a private agent fleet.",
     "",
     "## Usage",
     "",
@@ -515,11 +542,8 @@ function add(opts) {
   if (!name || !type || !source || !itemPath) {
     throw new Error("Required: --name, --type, --source, --path");
   }
-  if (type !== "skill" && type !== "extension") {
-    throw new Error(`Invalid type "${type}". Use "skill" or "extension".`);
-  }
+  const section = sectionForType(type); // validates type
 
-  // Determine fleet repo from cache or opts
   const cached = readCachedCatalog();
   if (!cached || !cached.fleet_repo) {
     throw new Error("No fleet library configured. Run setup first.");
@@ -527,9 +551,7 @@ function add(opts) {
   const { owner, repo } = parseFleetRepo(cached.fleet_repo);
   const { data: catalog, sha } = fetchCatalog(owner, repo);
 
-  // Check for duplicates
-  const section = type === "skill" ? "skills" : "extensions";
-  if (!catalog.library) catalog.library = { skills: [], extensions: [] };
+  if (!catalog.library) catalog.library = emptyLibrary();
   if (!catalog.library[section]) catalog.library[section] = [];
 
   const existing = catalog.library[section].find((item) => item.name === name);
@@ -537,12 +559,10 @@ function add(opts) {
     throw new Error(`Item "${name}" already exists in the catalog.`);
   }
 
-  // Add entry
   const entry = { name, source, path: itemPath };
   if (description) entry.description = description;
   catalog.library[section].push(entry);
 
-  // Push updated catalog
   updateCatalogInRepo(owner, repo, catalog, sha);
   writeCachedCatalog(catalog);
 
@@ -568,7 +588,6 @@ function use(opts) {
   if (!match) throw new Error(`Item "${name}" not found in catalog.`);
   const { item, type } = match;
 
-  // Determine source repo
   let srcOwner, srcRepo;
   if (item.source === "fleet") {
     srcOwner = fleetOwner;
@@ -579,49 +598,55 @@ function use(opts) {
     srcRepo = parsed.repo;
   }
 
-  // Determine target directory — scope-aware defaults
-  const userScoped = isUserScoped();
-  const effectiveGlobal = isGlobal || userScoped;
   const root = findRepoRoot();
-
-  if (!effectiveGlobal && !root) {
-    throw new Error(
-      "No repo found (no .github/registry.json in parent dirs). Use --global to install to ~/.copilot/skills/"
-    );
-  }
-
   let targetBase;
-  if (effectiveGlobal) {
+  if (isGlobal) {
     const globalDir = getGlobalDir(catalog, type);
     targetBase = globalDir.startsWith("/") || globalDir.match(/^[A-Z]:/i)
       ? globalDir
-      : path.join(root || process.cwd(), globalDir);
+      : path.join(root, globalDir);
   } else {
     targetBase = path.join(root, getDefaultDir(catalog, type));
   }
-  const targetDir = path.join(targetBase, name);
 
-  // Download files
   const srcRepoInfo = gh(`/repos/${srcOwner}/${srcRepo}`);
   const srcBranch = srcRepoInfo.default_branch || "main";
   const treeMap = fetchTreeMap(srcOwner, srcRepo, srcBranch);
-  const fileCount = downloadFiles(srcOwner, srcRepo, treeMap, item.path, targetDir);
 
-  if (fileCount === 0) {
-    throw new Error(`No files found at path "${item.path}" in ${srcOwner}/${srcRepo}`);
+  let fileCount;
+  let targetDisplay;
+
+  if (isFileType(type)) {
+    // Single-file item: download directly into the target base directory
+    fs.mkdirSync(targetBase, { recursive: true });
+    const fileName = path.basename(item.path);
+    const sha = treeMap.get(item.path);
+    if (!sha) {
+      throw new Error(`File not found at path "${item.path}" in ${srcOwner}/${srcRepo}`);
+    }
+    const content = ghBlob(srcOwner, srcRepo, sha);
+    fs.writeFileSync(path.join(targetBase, fileName), content);
+    fileCount = 1;
+    targetDisplay = isGlobal ? path.join(targetBase, fileName) : path.join(getDefaultDir(catalog, type), fileName);
+  } else {
+    // Directory item: download tree into targetBase/name/
+    const targetDir = path.join(targetBase, name);
+    fileCount = downloadFiles(srcOwner, srcRepo, treeMap, item.path, targetDir);
+    if (fileCount === 0) {
+      throw new Error(`No files found at path "${item.path}" in ${srcOwner}/${srcRepo}`);
+    }
+    runNpmInstall(targetDir);
+    targetDisplay = isGlobal ? targetDir : path.join(getDefaultDir(catalog, type), name);
   }
-
-  const npmInstalled = runNpmInstall(targetDir);
 
   return {
     installed: {
       name,
       type,
       files: fileCount,
-      target: effectiveGlobal ? targetDir : path.join(getDefaultDir(catalog, type), name),
-      scope: effectiveGlobal ? "global" : "repo",
+      target: targetDisplay,
     },
-    npmInstalled,
+    npmInstalled: false,
   };
 }
 
@@ -642,7 +667,6 @@ function push(opts) {
   if (!match) throw new Error(`Item "${name}" not found in catalog.`);
   const { item, type } = match;
 
-  // Determine source repo to push to
   let targetOwner, targetRepo;
   if (item.source === "fleet") {
     targetOwner = fleetOwner;
@@ -653,22 +677,39 @@ function push(opts) {
     targetRepo = parsed.repo;
   }
 
-  // Find local files
   const root = findRepoRoot();
-  const defaultDir = root ? path.join(root, getDefaultDir(catalog, type), name) : null;
-  const globalDir = path.join(getGlobalDir(catalog, type), name);
-  let localDir;
-  if (defaultDir && fs.existsSync(defaultDir)) {
-    localDir = defaultDir;
-  } else if (fs.existsSync(globalDir)) {
-    localDir = globalDir;
-  } else {
-    throw new Error(`No local installation found for "${name}"`);
-  }
+  let localFiles;
 
-  const localFiles = readDirRecursive(localDir, "");
-  if (localFiles.length === 0) {
-    throw new Error(`No files found in local installation at ${localDir}`);
+  if (isFileType(type)) {
+    // Single-file: find the file in default or global dir
+    const fileName = path.basename(item.path);
+    const defaultFile = path.join(root, getDefaultDir(catalog, type), fileName);
+    const globalFile = path.join(getGlobalDir(catalog, type), fileName);
+    let localPath;
+    if (fs.existsSync(defaultFile)) {
+      localPath = defaultFile;
+    } else if (fs.existsSync(globalFile)) {
+      localPath = globalFile;
+    } else {
+      throw new Error(`No local installation found for "${name}" (looked for ${fileName})`);
+    }
+    localFiles = [{ path: path.basename(localPath), content: fs.readFileSync(localPath) }];
+  } else {
+    // Directory: existing recursive read logic
+    const defaultDir = path.join(root, getDefaultDir(catalog, type), name);
+    const globalDir = path.join(getGlobalDir(catalog, type), name);
+    let localDir;
+    if (fs.existsSync(defaultDir)) {
+      localDir = defaultDir;
+    } else if (fs.existsSync(globalDir)) {
+      localDir = globalDir;
+    } else {
+      throw new Error(`No local installation found for "${name}"`);
+    }
+    localFiles = readDirRecursive(localDir, "");
+    if (localFiles.length === 0) {
+      throw new Error(`No files found in local installation at ${localDir}`);
+    }
   }
 
   // Push via Git Data API
@@ -685,9 +726,15 @@ function push(opts) {
       content: file.content.toString("base64"),
       encoding: "base64",
     });
-    const targetPath = item.path.endsWith("/")
-      ? `${item.path}${file.path}`
-      : `${item.path}/${file.path}`;
+    let targetPath;
+    if (isFileType(type)) {
+      // Single file: push to the exact catalog path
+      targetPath = item.path;
+    } else {
+      targetPath = item.path.endsWith("/")
+        ? `${item.path}${file.path}`
+        : `${item.path}/${file.path}`;
+    }
     treeEntries.push({
       path: targetPath,
       mode: "100644",
@@ -736,25 +783,36 @@ function remove(opts) {
 
   const match = findItem(catalog, name);
   if (!match) throw new Error(`Item "${name}" not found in catalog.`);
-  const { type } = match;
+  const { item, type } = match;
 
-  // Remove from catalog
-  const section = type === "skill" ? "skills" : "extensions";
-  catalog.library[section] = catalog.library[section].filter((item) => item.name !== name);
+  const section = sectionForType(type);
+  catalog.library[section] = catalog.library[section].filter((i) => i.name !== name);
 
   updateCatalogInRepo(owner, repo, catalog, sha);
   writeCachedCatalog(catalog);
 
-  // Optionally delete local files
   let localDeleted = false;
   const root = findRepoRoot();
-  const defaultDir = root ? path.join(root, getDefaultDir(catalog, type), name) : null;
-  const globalDir = path.join(getGlobalDir(catalog, type), name);
 
-  for (const dir of [defaultDir, globalDir].filter(Boolean)) {
-    if (fs.existsSync(dir)) {
-      fs.rmSync(dir, { recursive: true, force: true });
-      localDeleted = true;
+  if (isFileType(type)) {
+    // Single-file: delete the file from default or global dir
+    const fileName = path.basename(item.path);
+    const defaultFile = path.join(root, getDefaultDir(catalog, type), fileName);
+    const globalFile = path.join(getGlobalDir(catalog, type), fileName);
+    for (const f of [defaultFile, globalFile]) {
+      if (fs.existsSync(f)) {
+        fs.rmSync(f, { force: true });
+        localDeleted = true;
+      }
+    }
+  } else {
+    const defaultDir = path.join(root, getDefaultDir(catalog, type), name);
+    const globalDir = path.join(getGlobalDir(catalog, type), name);
+    for (const dir of [defaultDir, globalDir]) {
+      if (fs.existsSync(dir)) {
+        fs.rmSync(dir, { recursive: true, force: true });
+        localDeleted = true;
+      }
     }
   }
 
@@ -779,18 +837,27 @@ function list() {
     fleet_repo: catalog.fleet_repo,
     skills: [],
     extensions: [],
+    prompts: [],
   };
 
-  for (const section of ["skills", "extensions"]) {
+  for (const section of ALL_SECTIONS) {
     const items = (catalog.library && catalog.library[section]) || [];
     for (const item of items) {
-      const type = section === "skills" ? "skill" : "extension";
-      const defaultDir = root ? path.join(root, getDefaultDir(catalog, type), item.name) : null;
-      const globalDir = path.join(getGlobalDir(catalog, type), item.name);
+      const type = typeForSection(section);
 
       let installed = false;
-      if (defaultDir && fs.existsSync(defaultDir)) installed = "default";
-      else if (fs.existsSync(globalDir)) installed = "global";
+      if (isFileType(type)) {
+        const fileName = path.basename(item.path);
+        const defaultFile = path.join(root, getDefaultDir(catalog, type), fileName);
+        const globalFile = path.join(getGlobalDir(catalog, type), fileName);
+        if (fs.existsSync(defaultFile)) installed = "default";
+        else if (fs.existsSync(globalFile)) installed = "global";
+      } else {
+        const defaultDir = path.join(root, getDefaultDir(catalog, type), item.name);
+        const globalDir = path.join(getGlobalDir(catalog, type), item.name);
+        if (fs.existsSync(defaultDir)) installed = "default";
+        else if (fs.existsSync(globalDir)) installed = "global";
+      }
 
       result[section].push({
         name: item.name,
@@ -818,17 +885,26 @@ function sync() {
   const synced = [];
   const errors = [];
 
-  for (const section of ["skills", "extensions"]) {
+  for (const section of ALL_SECTIONS) {
     const items = (catalog.library && catalog.library[section]) || [];
     for (const item of items) {
-      const type = section === "skills" ? "skill" : "extension";
-      const defaultDir = root ? path.join(root, getDefaultDir(catalog, type), item.name) : null;
-      const globalDir = path.join(getGlobalDir(catalog, type), item.name);
+      const type = typeForSection(section);
 
       let isInstalled = false;
       let isGlobal = false;
-      if (defaultDir && fs.existsSync(defaultDir)) isInstalled = true;
-      else if (fs.existsSync(globalDir)) { isInstalled = true; isGlobal = true; }
+
+      if (isFileType(type)) {
+        const fileName = path.basename(item.path);
+        const defaultFile = path.join(root, getDefaultDir(catalog, type), fileName);
+        const globalFile = path.join(getGlobalDir(catalog, type), fileName);
+        if (fs.existsSync(defaultFile)) isInstalled = true;
+        else if (fs.existsSync(globalFile)) { isInstalled = true; isGlobal = true; }
+      } else {
+        const defaultDir = path.join(root, getDefaultDir(catalog, type), item.name);
+        const globalDir = path.join(getGlobalDir(catalog, type), item.name);
+        if (fs.existsSync(defaultDir)) isInstalled = true;
+        else if (fs.existsSync(globalDir)) { isInstalled = true; isGlobal = true; }
+      }
 
       if (!isInstalled) continue;
 
@@ -859,7 +935,7 @@ function search(keyword) {
   const term = keyword.toLowerCase();
   const matches = [];
 
-  for (const section of ["skills", "extensions"]) {
+  for (const section of ALL_SECTIONS) {
     const items = (catalog.library && catalog.library[section]) || [];
     for (const item of items) {
       const nameMatch = item.name.toLowerCase().includes(term);
@@ -867,7 +943,7 @@ function search(keyword) {
       if (nameMatch || descMatch) {
         matches.push({
           name: item.name,
-          type: section === "skills" ? "skill" : "extension",
+          type: typeForSection(section),
           description: item.description || "",
           source: item.source,
         });
@@ -890,9 +966,6 @@ function invite(agentName) {
 
   // Look for contact skill
   const root = findRepoRoot();
-  if (!root) {
-    throw new Error("No repo found. Invite must be run from within a repo that has contact skills installed.");
-  }
   const sendScript = path.join(root, ".github", "skills", agentName, "send.js");
 
   if (!fs.existsSync(sendScript)) {
@@ -925,6 +998,12 @@ module.exports = {
   findItem,
   getDefaultDir,
   getGlobalDir,
+  sectionForType,
+  typeForSection,
+  isFileType,
+  ALL_SECTIONS,
+  VALID_TYPES,
+  emptyLibrary,
   setup,
   add,
   use,

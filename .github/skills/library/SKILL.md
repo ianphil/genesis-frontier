@@ -1,11 +1,11 @@
 ---
 name: library
-description: Fleet library for sharing skills and extensions between agents. Use when the user asks to "share a skill", "fleet library", "library setup", "library add", "library use", "library sync", "library list", "library push", "library invite", or wants to distribute skills laterally across a private agent fleet.
+description: Fleet library for sharing skills, extensions, and prompts between agents. Use when the user asks to "share a skill", "share a prompt", "fleet library", "library setup", "library add", "library use", "library sync", "library list", "library push", "library invite", or wants to distribute skills, extensions, or prompts laterally across a private agent fleet.
 ---
 
 # Fleet Library
 
-Share skills and extensions laterally between agents in a private fleet via a shared GitHub repository.
+Share skills, extensions, and prompts laterally between agents in a private fleet via a shared GitHub repository.
 
 **This skill includes `library.js`** — a script that handles catalog management, file distribution, and fleet repo operations. Your job is to run it and handle UX.
 
@@ -17,7 +17,12 @@ Share skills and extensions laterally between agents in a private fleet via a sh
 
 ## How It Works
 
-The fleet library is a private GitHub repo that acts as a shared catalog and hosting layer for skills and extensions. Agents share items by registering them in the catalog (`library.yaml`) and pulling them from the source repo (or from the fleet repo itself for fleet-hosted items).
+The fleet library is a private GitHub repo that acts as a shared catalog and hosting layer for skills, extensions, and prompts. Agents share items by registering them in the catalog (`library.yaml`) and pulling them from the source repo (or from the fleet repo itself for fleet-hosted items).
+
+**Three item types:**
+- `skill` — directory-based, installed to `.github/skills/` or `~/.copilot/skills/`
+- `extension` — directory-based, installed to `.github/extensions/` or `~/.copilot/extensions/`
+- `prompt` — single-file (`.prompt.md`), installed to `.github/prompts/` or `~/.copilot/prompts/`
 
 **Three source types:**
 - `fleet` — item is hosted directly in the fleet-library repo
@@ -48,6 +53,7 @@ This creates a private repo, scaffolds it with an empty catalog, README, and a c
 
 ```bash
 node .github/skills/library/library.js add --name daily-report --type skill --source owner/agent-repo --path .github/skills/daily-report --description "Comprehensive daily briefing"
+node .github/skills/library/library.js add --name code-review --type prompt --source owner/agent-repo --path .github/prompts/code-review.prompt.md --description "Structured code review prompt"
 ```
 
 Output JSON:
@@ -69,7 +75,7 @@ Output JSON:
 { "installed": { "name": "daily-report", "type": "skill", "files": 3, "target": ".github/skills/daily-report" }, "npmInstalled": false }
 ```
 
-`--global` installs to the user-level directory (`~/.copilot/skills/` or `~/.copilot/extensions/`).
+`--global` installs to the user-level directory (`~/.copilot/skills/`, `~/.copilot/extensions/`, or `~/.copilot/prompts/`).
 
 ### Push — push local changes back to source
 
@@ -109,7 +115,10 @@ Output JSON:
   "skills": [
     { "name": "daily-report", "description": "Comprehensive daily briefing", "source": "owner/agent-repo", "installed": "default" }
   ],
-  "extensions": []
+  "extensions": [],
+  "prompts": [
+    { "name": "code-review", "description": "Structured code review prompt", "source": "owner/agent-repo", "installed": "default" }
+  ]
 }
 ```
 
@@ -197,6 +206,10 @@ Skills:
 
 Extensions:
   (none)
+
+Prompts:
+  📄 code-review — Structured code review prompt
+     source: owner/agent-repo | installed: default
 ```
 
 ### After sync
@@ -223,3 +236,4 @@ Search results for "report":
 - **If `gh` CLI is not available**, report the error and stop
 - **If the script fails**, show the error output and suggest checking `gh auth status`
 - **Catalog is the source of truth** — the `library.yaml` in the fleet repo is authoritative
+- **Prompts are single files** — unlike skills/extensions (directories), prompts are `.prompt.md` files installed directly into the prompts directory, not into a subdirectory
