@@ -36,6 +36,7 @@ Create `.github/skills/<agent-name>/` with four files:
 
 ```
 .env
+jobs.json
 ```
 
 ### `.env`
@@ -73,20 +74,50 @@ description: >
 
 ## Sending a Message
 
+Messages are **async by default** — the script fires the message and returns immediately with `ACCEPTED: <id>`. The remote agent processes it in the background. The job ID is automatically tracked in `jobs.json`.
+
 ```
 node .github/skills/<agent-name>/send.js --message "Your message here"
 ```
 
-The script handles everything — token minting, caching, tunnel resolution, health checks, and auth. Just pass the message.
+For questions that need a reply in this session, use `--sync`:
 
-**Read stdout** for the agent's reply. **Read stderr** for errors.
+```
+node .github/skills/<agent-name>/send.js --message "Quick question" --sync
+```
+
+## Checking Async Results
+
+After sending an async message, check for the reply later:
+
+```
+node .github/skills/<agent-name>/send.js --check
+```
+
+This checks **all** pending jobs in `jobs.json`. Completed or failed jobs are printed and removed from tracking. Jobs still processing are reported with their sent timestamp.
+
+To check a specific job:
+
+```
+node .github/skills/<agent-name>/send.js --check <jobId>
+```
+
+**Read stdout** for results. **Read stderr** for errors.
+
+## Workflow
+
+1. Send async: `--message "..."` → `ACCEPTED: job_abc123` (saved to `jobs.json`)
+2. Do other work — no need to wait
+3. Check later: `--check` → prints completed results, removes them from tracking
+4. Still pending jobs remain in `jobs.json` for the next check
 
 ## Hard Rules
 
 1. **Never pass `previous_response_id` across tunnel boundaries** — the Responses API hangs on foreign conversation IDs. Each message is self-contained. For context continuity, include a summary of the prior exchange in your message text.
 2. **`stream: false` is enforced** — the script handles this. Do not attempt streaming.
-3. **Tokens auto-refresh** — the script caches a 24h JWT and refreshes when stale. You never manage tokens.
-4. **Never share the tunnel URL externally** — it's an internal network resource.
+3. **Async is the default** — use `--sync` only when you need a reply in-session.
+4. **Tokens auto-refresh** — the script caches a 24h JWT and refreshes when stale. You never manage tokens.
+5. **Never share the tunnel URL externally** — it's an internal network resource.
 
 ## Troubleshooting
 
@@ -99,7 +130,8 @@ The script handles everything — token minting, caching, tunnel resolution, hea
 
 ## Notes
 
-<Any additional context — e.g., "Tunnel URL is persistent across restarts but the Responses API process needs manual restart after session recycles.">
+- `jobs.json` is gitignored — ephemeral state like `.env`. Jobs stay until read via `--check`; no auto-pruning.
+- <Any additional context — e.g., "Tunnel URL is persistent across restarts but the Responses API process needs manual restart after session recycles.">
 ````
 
 ## Step 3: Verify
