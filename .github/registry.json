@@ -35,7 +35,7 @@
       "description": "Bootstrap new minds — repo-level or user-level"
     },
     "agent-comms": {
-      "version": "0.3.0",
+      "version": "0.3.1",
       "path": ".github/skills/agent-comms",
       "description": "Inter-agent communication — scaffold contact skills with async-default messaging, jobs.json tracking, and --check for result retrieval"
     },

@@ -119,11 +119,15 @@ function writeJobs(jobs) {
   fs.writeFileSync(JOBS_PATH, JSON.stringify(jobs, null, 2) + "\n", "utf-8");
 }
 
-function appendJob(id, feedUrl, prompt) {
+function appendJob(id, feedUrl, prompt, tunnelUrl) {
+  // Rewrite loopback feed URL to use the tunnel address
+  const resolvedFeedUrl = tunnelUrl && feedUrl
+    ? feedUrl.replace(/^https?:\/\/127\.0\.0\.1:\d+/, tunnelUrl)
+    : feedUrl;
   const jobs = readJobs();
   jobs.push({
     id,
-    feed_url: feedUrl,
+    feed_url: resolvedFeedUrl,
     prompt: prompt.length > 200 ? prompt.slice(0, 200) + "..." : prompt,
     sent_at: new Date().toISOString(),
   });
@@ -328,7 +332,7 @@ async function main() {
   if (result.accepted) {
     const jobId = result.data.id || "unknown";
     const feedUrl = result.data.feed_url || "";
-    appendJob(jobId, feedUrl, message);
+    appendJob(jobId, feedUrl, message, env.TUNNEL_URL);
     process.stdout.write(`ACCEPTED: ${jobId}\n`);
   } else if (result.data && result.data.output_text) {
     process.stdout.write(result.data.output_text + "\n");
