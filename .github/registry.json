@@ -1,5 +1,5 @@
 {
-  "version": "0.5.0",
+  "version": "0.5.1",
   "source": "ianphil/genesis-frontier",
   "extensions": {
     "heartbeat": {
@@ -35,7 +35,7 @@
       "description": "Bootstrap new minds — repo-level or user-level"
     },
     "agent-comms": {
-      "version": "0.3.1",
+      "version": "0.3.2",
       "path": ".github/skills/agent-comms",
       "description": "Inter-agent communication — scaffold contact skills with async-default messaging, jobs.json tracking, and --check for result retrieval"
     },

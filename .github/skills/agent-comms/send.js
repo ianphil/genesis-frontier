@@ -292,8 +292,15 @@ async function main() {
       const status = result.status || "unknown";
 
       if (terminal.has(status)) {
-        if (result.response) {
-          process.stdout.write(`[${status.toUpperCase()}] ${job.id}: ${result.response}\n`);
+        // Extract response: prefer top-level field, fall back to statusItems "Response" entry
+        const responseText = result.response
+          || (result.statusItems || [])
+              .filter((i) => i.title === "Response")
+              .pop()?.description
+          || null;
+
+        if (responseText) {
+          process.stdout.write(`[${status.toUpperCase()}] ${job.id}: ${responseText}\n`);
         } else {
           process.stdout.write(`[${status.toUpperCase()}] ${job.id}: (no response body)\n`);
         }
