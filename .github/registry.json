@@ -1,5 +1,5 @@
 {
-  "version": "0.5.1",
+  "version": "0.6.0",
   "source": "ianphil/genesis-frontier",
   "extensions": {
     "heartbeat": {
@@ -43,6 +43,11 @@
       "version": "0.2.0",
       "path": ".github/skills/library",
       "description": "Fleet library — lateral skill sharing between agents via a shared private GitHub repo"
+    },
+    "generate-agent": {
+      "version": "0.1.0",
+      "path": ".github/skills/generate-agent",
+      "description": "Generate a Copilot CLI agent with a distinct personality — produces agent file + soul file at repo or user scope"
     }
   },
   "prompts": {},
