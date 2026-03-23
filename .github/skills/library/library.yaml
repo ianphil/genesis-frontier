@@ -1,0 +1,11 @@
+fleet_repo: ianphil/fleet-library
+default_dirs:
+  skills:
+    default: .github/skills/
+    global: ~/.copilot/skills/
+  extensions:
+    default: .github/extensions/
+    global: ~/.copilot/extensions/
+  prompts:
+    default: .github/prompts/
+    global: ~/.copilot/prompts/

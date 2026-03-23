@@ -267,6 +267,24 @@ function serializeYaml(data) {
   return lines.join("\n");
 }
 
+function serializeConfig(data) {
+  const lines = [];
+  if (data.fleet_repo) {
+    lines.push(`fleet_repo: ${data.fleet_repo}`);
+  }
+  if (data.default_dirs) {
+    lines.push("default_dirs:");
+    for (const [category, dirs] of Object.entries(data.default_dirs)) {
+      lines.push(`  ${category}:`);
+      for (const [key, val] of Object.entries(dirs)) {
+        lines.push(`    ${key}: ${val}`);
+      }
+    }
+  }
+  lines.push("");
+  return lines.join("\n");
+}
+
 // ── Catalog operations ───────────────────────────────────────────────────────
 
 function parseFleetRepo(repoStr) {
@@ -287,18 +305,19 @@ function fetchCatalog(owner, repo) {
   }
 }
 
-function readCachedCatalog() {
+function readConfig() {
   const cachePath = getCachePath();
   if (fs.existsSync(cachePath)) {
     const content = fs.readFileSync(cachePath, "utf8");
-    return parseYaml(content);
+    const parsed = parseYaml(content);
+    return { fleet_repo: parsed.fleet_repo || null, default_dirs: parsed.default_dirs || null };
   }
   return null;
 }
 
-function writeCachedCatalog(data) {
+function writeConfig(data) {
   const cachePath = getCachePath();
-  fs.writeFileSync(cachePath, serializeYaml(data), "utf8");
+  fs.writeFileSync(cachePath, serializeConfig(data), "utf8");
 }
 
 function updateCatalogInRepo(owner, repo, data, sha) {
@@ -311,16 +330,7 @@ function updateCatalogInRepo(owner, repo, data, sha) {
 }
 
 function getCatalog(owner, repo) {
-  // Try fleet repo first, fall back to cache
-  try {
-    const { data, sha } = fetchCatalog(owner, repo);
-    writeCachedCatalog(data);
-    return { data, sha };
-  } catch (e) {
-    const cached = readCachedCatalog();
-    if (cached) return { data: cached, sha: null };
-    throw e;
-  }
+  return fetchCatalog(owner, repo);
 }
 
 function findItem(catalog, name) {
@@ -525,8 +535,8 @@ function setup(repoStr) {
     sha: newCommit.sha,
   });
 
-  // Cache catalog locally so subsequent commands work without re-fetching
-  writeCachedCatalog(catalogData);
+  // Save local config (fleet_repo + default_dirs only)
+  writeConfig(catalogData);
 
   return {
     repo: repoStr,
@@ -544,11 +554,11 @@ function add(opts) {
   }
   const section = sectionForType(type); // validates type
 
-  const cached = readCachedCatalog();
-  if (!cached || !cached.fleet_repo) {
+  const config = readConfig();
+  if (!config || !config.fleet_repo) {
     throw new Error("No fleet library configured. Run setup first.");
   }
-  const { owner, repo } = parseFleetRepo(cached.fleet_repo);
+  const { owner, repo } = parseFleetRepo(config.fleet_repo);
   const { data: catalog, sha } = fetchCatalog(owner, repo);
 
   if (!catalog.library) catalog.library = emptyLibrary();
@@ -564,7 +574,6 @@ function add(opts) {
   catalog.library[section].push(entry);
 
   updateCatalogInRepo(owner, repo, catalog, sha);
-  writeCachedCatalog(catalog);
 
   return {
     added: { name, type, source, path: itemPath },
@@ -577,11 +586,11 @@ function use(opts) {
   const { name, global: isGlobal } = opts;
   if (!name) throw new Error("Required: --name");
 
-  const cached = readCachedCatalog();
-  if (!cached || !cached.fleet_repo) {
+  const config = readConfig();
+  if (!config || !config.fleet_repo) {
     throw new Error("No fleet library configured. Run setup first.");
   }
-  const { owner: fleetOwner, repo: fleetRepo } = parseFleetRepo(cached.fleet_repo);
+  const { owner: fleetOwner, repo: fleetRepo } = parseFleetRepo(config.fleet_repo);
   const { data: catalog } = getCatalog(fleetOwner, fleetRepo);
 
   const match = findItem(catalog, name);
@@ -601,12 +610,12 @@ function use(opts) {
   const root = findRepoRoot();
   let targetBase;
   if (isGlobal) {
-    const globalDir = getGlobalDir(catalog, type);
+    const globalDir = getGlobalDir(config, type);
     targetBase = globalDir.startsWith("/") || globalDir.match(/^[A-Z]:/i)
       ? globalDir
       : path.join(root, globalDir);
   } else {
-    targetBase = path.join(root, getDefaultDir(catalog, type));
+    targetBase = path.join(root, getDefaultDir(config, type));
   }
 
   const srcRepoInfo = gh(`/repos/${srcOwner}/${srcRepo}`);
@@ -627,7 +636,7 @@ function use(opts) {
     const content = ghBlob(srcOwner, srcRepo, sha);
     fs.writeFileSync(path.join(targetBase, fileName), content);
     fileCount = 1;
-    targetDisplay = isGlobal ? path.join(targetBase, fileName) : path.join(getDefaultDir(catalog, type), fileName);
+    targetDisplay = isGlobal ? path.join(targetBase, fileName) : path.join(getDefaultDir(config, type), fileName);
   } else {
     // Directory item: download tree into targetBase/name/
     const targetDir = path.join(targetBase, name);
@@ -636,7 +645,7 @@ function use(opts) {
       throw new Error(`No files found at path "${item.path}" in ${srcOwner}/${srcRepo}`);
     }
     runNpmInstall(targetDir);
-    targetDisplay = isGlobal ? targetDir : path.join(getDefaultDir(catalog, type), name);
+    targetDisplay = isGlobal ? targetDir : path.join(getDefaultDir(config, type), name);
   }
 
   return {
@@ -656,11 +665,11 @@ function push(opts) {
   const { name } = opts;
   if (!name) throw new Error("Required: --name");
 
-  const cached = readCachedCatalog();
-  if (!cached || !cached.fleet_repo) {
+  const config = readConfig();
+  if (!config || !config.fleet_repo) {
     throw new Error("No fleet library configured. Run setup first.");
   }
-  const { owner: fleetOwner, repo: fleetRepo } = parseFleetRepo(cached.fleet_repo);
+  const { owner: fleetOwner, repo: fleetRepo } = parseFleetRepo(config.fleet_repo);
   const { data: catalog } = getCatalog(fleetOwner, fleetRepo);
 
   const match = findItem(catalog, name);
@@ -683,8 +692,8 @@ function push(opts) {
   if (isFileType(type)) {
     // Single-file: find the file in default or global dir
     const fileName = path.basename(item.path);
-    const defaultFile = path.join(root, getDefaultDir(catalog, type), fileName);
-    const globalFile = path.join(getGlobalDir(catalog, type), fileName);
+    const defaultFile = path.join(root, getDefaultDir(config, type), fileName);
+    const globalFile = path.join(getGlobalDir(config, type), fileName);
     let localPath;
     if (fs.existsSync(defaultFile)) {
       localPath = defaultFile;
@@ -696,8 +705,8 @@ function push(opts) {
     localFiles = [{ path: path.basename(localPath), content: fs.readFileSync(localPath) }];
   } else {
     // Directory: existing recursive read logic
-    const defaultDir = path.join(root, getDefaultDir(catalog, type), name);
-    const globalDir = path.join(getGlobalDir(catalog, type), name);
+    const defaultDir = path.join(root, getDefaultDir(config, type), name);
+    const globalDir = path.join(getGlobalDir(config, type), name);
     let localDir;
     if (fs.existsSync(defaultDir)) {
       localDir = defaultDir;
@@ -774,11 +783,11 @@ function remove(opts) {
   const { name } = opts;
   if (!name) throw new Error("Required: --name");
 
-  const cached = readCachedCatalog();
-  if (!cached || !cached.fleet_repo) {
+  const config = readConfig();
+  if (!config || !config.fleet_repo) {
     throw new Error("No fleet library configured. Run setup first.");
   }
-  const { owner, repo } = parseFleetRepo(cached.fleet_repo);
+  const { owner, repo } = parseFleetRepo(config.fleet_repo);
   const { data: catalog, sha } = fetchCatalog(owner, repo);
 
   const match = findItem(catalog, name);
@@ -789,7 +798,6 @@ function remove(opts) {
   catalog.library[section] = catalog.library[section].filter((i) => i.name !== name);
 
   updateCatalogInRepo(owner, repo, catalog, sha);
-  writeCachedCatalog(catalog);
 
   let localDeleted = false;
   const root = findRepoRoot();
@@ -797,8 +805,8 @@ function remove(opts) {
   if (isFileType(type)) {
     // Single-file: delete the file from default or global dir
     const fileName = path.basename(item.path);
-    const defaultFile = path.join(root, getDefaultDir(catalog, type), fileName);
-    const globalFile = path.join(getGlobalDir(catalog, type), fileName);
+    const defaultFile = path.join(root, getDefaultDir(config, type), fileName);
+    const globalFile = path.join(getGlobalDir(config, type), fileName);
     for (const f of [defaultFile, globalFile]) {
       if (fs.existsSync(f)) {
         fs.rmSync(f, { force: true });
@@ -806,8 +814,8 @@ function remove(opts) {
       }
     }
   } else {
-    const defaultDir = path.join(root, getDefaultDir(catalog, type), name);
-    const globalDir = path.join(getGlobalDir(catalog, type), name);
+    const defaultDir = path.join(root, getDefaultDir(config, type), name);
+    const globalDir = path.join(getGlobalDir(config, type), name);
     for (const dir of [defaultDir, globalDir]) {
       if (fs.existsSync(dir)) {
         fs.rmSync(dir, { recursive: true, force: true });
@@ -825,11 +833,11 @@ function remove(opts) {
 // ── List command ─────────────────────────────────────────────────────────────
 
 function list() {
-  const cached = readCachedCatalog();
-  if (!cached || !cached.fleet_repo) {
+  const config = readConfig();
+  if (!config || !config.fleet_repo) {
     throw new Error("No fleet library configured. Run setup first.");
   }
-  const { owner, repo } = parseFleetRepo(cached.fleet_repo);
+  const { owner, repo } = parseFleetRepo(config.fleet_repo);
   const { data: catalog } = getCatalog(owner, repo);
   const root = findRepoRoot();
 
@@ -848,13 +856,13 @@ function list() {
       let installed = false;
       if (isFileType(type)) {
         const fileName = path.basename(item.path);
-        const defaultFile = path.join(root, getDefaultDir(catalog, type), fileName);
-        const globalFile = path.join(getGlobalDir(catalog, type), fileName);
+        const defaultFile = path.join(root, getDefaultDir(config, type), fileName);
+        const globalFile = path.join(getGlobalDir(config, type), fileName);
         if (fs.existsSync(defaultFile)) installed = "default";
         else if (fs.existsSync(globalFile)) installed = "global";
       } else {
-        const defaultDir = path.join(root, getDefaultDir(catalog, type), item.name);
-        const globalDir = path.join(getGlobalDir(catalog, type), item.name);
+        const defaultDir = path.join(root, getDefaultDir(config, type), item.name);
+        const globalDir = path.join(getGlobalDir(config, type), item.name);
         if (fs.existsSync(defaultDir)) installed = "default";
         else if (fs.existsSync(globalDir)) installed = "global";
       }
@@ -874,11 +882,11 @@ function list() {
 // ── Sync command ─────────────────────────────────────────────────────────────
 
 function sync() {
-  const cached = readCachedCatalog();
-  if (!cached || !cached.fleet_repo) {
+  const config = readConfig();
+  if (!config || !config.fleet_repo) {
     throw new Error("No fleet library configured. Run setup first.");
   }
-  const { owner, repo } = parseFleetRepo(cached.fleet_repo);
+  const { owner, repo } = parseFleetRepo(config.fleet_repo);
   const { data: catalog } = getCatalog(owner, repo);
   const root = findRepoRoot();
 
@@ -895,13 +903,13 @@ function sync() {
 
       if (isFileType(type)) {
         const fileName = path.basename(item.path);
-        const defaultFile = path.join(root, getDefaultDir(catalog, type), fileName);
-        const globalFile = path.join(getGlobalDir(catalog, type), fileName);
+        const defaultFile = path.join(root, getDefaultDir(config, type), fileName);
+        const globalFile = path.join(getGlobalDir(config, type), fileName);
         if (fs.existsSync(defaultFile)) isInstalled = true;
         else if (fs.existsSync(globalFile)) { isInstalled = true; isGlobal = true; }
       } else {
-        const defaultDir = path.join(root, getDefaultDir(catalog, type), item.name);
-        const globalDir = path.join(getGlobalDir(catalog, type), item.name);
+        const defaultDir = path.join(root, getDefaultDir(config, type), item.name);
+        const globalDir = path.join(getGlobalDir(config, type), item.name);
         if (fs.existsSync(defaultDir)) isInstalled = true;
         else if (fs.existsSync(globalDir)) { isInstalled = true; isGlobal = true; }
       }
@@ -925,11 +933,11 @@ function sync() {
 function search(keyword) {
   if (!keyword) throw new Error("Required: --keyword");
 
-  const cached = readCachedCatalog();
-  if (!cached || !cached.fleet_repo) {
+  const config = readConfig();
+  if (!config || !config.fleet_repo) {
     throw new Error("No fleet library configured. Run setup first.");
   }
-  const { owner, repo } = parseFleetRepo(cached.fleet_repo);
+  const { owner, repo } = parseFleetRepo(config.fleet_repo);
   const { data: catalog } = getCatalog(owner, repo);
 
   const term = keyword.toLowerCase();
@@ -959,8 +967,8 @@ function search(keyword) {
 function invite(agentName) {
   if (!agentName) throw new Error("Required: --agent");
 
-  const cached = readCachedCatalog();
-  if (!cached || !cached.fleet_repo) {
+  const config = readConfig();
+  if (!config || !config.fleet_repo) {
     throw new Error("No fleet library configured. Run setup first.");
   }
 
@@ -975,7 +983,7 @@ function invite(agentName) {
   try {
     const payload = JSON.stringify({
       type: "fleet-library-invite",
-      repo: cached.fleet_repo,
+      repo: config.fleet_repo,
       from: path.basename(root),
     });
     execSync(`node "${sendScript}" --message ${JSON.stringify(payload)}`, {
@@ -994,6 +1002,7 @@ function invite(agentName) {
 module.exports = {
   parseYaml,
   serializeYaml,
+  serializeConfig,
   parseFleetRepo,
   findItem,
   getDefaultDir,
@@ -1004,6 +1013,8 @@ module.exports = {
   ALL_SECTIONS,
   VALID_TYPES,
   emptyLibrary,
+  readConfig,
+  writeConfig,
   setup,
   add,
   use,
