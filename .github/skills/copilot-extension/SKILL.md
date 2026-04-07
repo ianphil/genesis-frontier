@@ -1,178 +1,257 @@
 ---
 name: copilot-extension
-description: Reference for building and debugging Copilot CLI extensions. Use when working on anything in .github/extensions/, troubleshooting SDK imports, or creating new extension tools.
+description: Reference for building and debugging Copilot CLI extensions. Use when working on anything in .github/extensions/, creating extension tools, or troubleshooting extension lifecycle and SDK behavior.
 ---
 
 # Copilot Extension Development
 
-SDK patterns, API surface, and gotchas for building Copilot CLI extensions.
+Authoritative patterns for Copilot CLI extensions on SDK 1.0.20. This is about the **extension API**, not the out-of-process SDK client.
 
-## SDK Location
+## What an extension is
 
-The Copilot SDK is installed at `~/.copilot/pkg/`. It is **not** an npm package — resolve it by scanning the filesystem.
+Extensions are Node child processes discovered from:
 
-**Search order** (check platform-specific first, then universal):
-1. `~/.copilot/pkg/{platform}-{arch}/{version}/copilot-sdk/index.js`
-2. `~/.copilot/pkg/universal/{version}/copilot-sdk/index.js`
-
-Platform values: `win32-x64`, `darwin-arm64`, `darwin-x64`, `linux-x64`, etc. Built from `process.platform` + `process.arch`.
-
-**Version resolution** — always resolve dynamically (never hardcode a version):
-```js
-import { readdirSync } from "node:fs";
-import { join } from "node:path";
-import { homedir } from "node:os";
-
-async function resolveSdk() {
-  const pkgRoot = join(homedir(), ".copilot", "pkg");
-  const platformDir = `${process.platform}-${process.arch}`;
-  const searchDirs = [join(pkgRoot, platformDir), join(pkgRoot, "universal")];
-
-  for (const sdkBase of searchDirs) {
-    let versions;
-    try {
-      versions = readdirSync(sdkBase)
-        .filter((d) => !d.startsWith("."))
-        .sort();
-    } catch {
-      continue;
-    }
-    if (versions.length === 0) continue;
-
-    const latest = versions[versions.length - 1];
-    const sdkPath = join(sdkBase, latest, "copilot-sdk", "index.js");
-
-    try {
-      // Must use file:// URL with forward slashes
-      return await import(`file://${sdkPath.replace(/\\/g, "/")}`);
-    } catch {
-      continue;
-    }
-  }
-  throw new Error(`Cannot find Copilot SDK in: ${searchDirs.join(", ")}`);
-}
+```text
+.github/extensions/<name>/extension.mjs
 ```
 
-## SDK Exports
+The CLI forks each extension, wires up JSON-RPC over stdio, and the extension joins the active foreground session with:
 
 ```js
-import { CopilotClient, CopilotSession, approveAll, defineTool } from "copilot-sdk";
+import { joinSession } from "@github/copilot-sdk/extension";
 ```
 
-## CopilotClient API
+Do **not** scan `~/.copilot/pkg` or import `CopilotClient` when writing an extension. That is for out-of-process code, not `.github/extensions/*/extension.mjs`.
 
-All methods are **camelCase** — not PascalCase.
+## Workflow
 
-```js
-const client = new CopilotClient({
-  cwd: "/path/to/workspace",
-  autoStart: true,
-});
-```
+1. **Scaffold**
+   ```js
+   extensions_manage({ operation: "scaffold", name: "my-extension" })
+   ```
+2. **Edit** `.github/extensions/my-extension/extension.mjs`
+3. **Reload**
+   ```js
+   extensions_reload({})
+   ```
+4. **Verify**
+   ```js
+   extensions_manage({ operation: "list" })
+   extensions_manage({ operation: "inspect", name: "my-extension" })
+   ```
 
-Key methods:
-- `client.start()` — connect to the Copilot backend
-- `client.stop()` — clean shutdown
-- `client.forceStop()` — hard kill
-- `client.createSession(config)` — create a new session (see below)
-- `client.ping()` — health check
-- `client.listModels()` — available models
-- `client.getStatus()` — connection status
-
-## Creating Sessions
-
-`createSession` **requires** an `onPermissionRequest` handler:
+## Minimal skeleton
 
 ```js
-const session = await client.createSession({
-  onPermissionRequest: approveAll,  // required
-  model: "claude-sonnet-4",       // optional
-  systemMessage: {                  // optional
-    mode: "append",
-    content: "Extra system instructions",
-  },
-});
-```
-
-## Sending Prompts
-
-Use `sendAndWait` — it handles event wiring, timeout, and idle detection internally:
-
-```js
-const response = await session.sendAndWait(
-  { prompt: "Your prompt here" },
-  timeoutMs,  // default 60000
-);
-// response is the last assistant.message event
-const output = response?.data?.content || "";
-```
-
-Lower-level alternative with `send` + event listeners:
-
-```js
-session.on((event) => {
-  // event.type values: "assistant.message", "session.idle", "session.error"
-  if (event.type === "assistant.message") { /* event.data.content */ }
-});
-await session.send({ prompt: "..." });
-```
-
-**Event types use dot notation** (`"session.idle"`), not PascalCase (`"SessionIdleEvent"`).
-
-## Command Execution (child_process)
-
-When spawning commands from extensions, always use `shell: true`:
-
-```js
-import { spawn } from "node:child_process";
-
-const fullCommand = args ? `${command} ${args}` : command;
-const child = spawn(fullCommand, [], { shell: true });
-```
-
-**Why:** Without `shell: true`, shell built-ins (`echo`, `set`, `cd`) fail with `ENOENT` on Windows. Quoted arguments also break when naively split by whitespace — the shell handles quoting correctly.
-
-## Extension Entry Point
-
-Extensions use `@github/copilot-sdk/extension` (provided in-process, not from filesystem):
-
-```js
-import { approveAll } from "@github/copilot-sdk";
 import { joinSession } from "@github/copilot-sdk/extension";
 
 const session = await joinSession({
-  onPermissionRequest: approveAll,
-  hooks: { onSessionStart: async () => { /* ... */ } },
-  tools: [ /* tool definitions */ ],
+  tools: [],
+  hooks: {},
 });
 ```
 
-**Note:** The `@github/copilot-sdk` import path only works inside the extension process managed by the CLI. Out-of-process code (like a detached cron engine) must resolve the SDK from the filesystem.
+Notes:
+- The file must be named `extension.mjs`
+- Only `.mjs` is supported
+- `@github/copilot-sdk` is provided automatically inside the extension process
 
-## Documentation & Type Definitions
+## Tool registration
 
-Official docs and examples ship with the SDK. To find them, resolve the latest installed version:
+Tools are declared in the `tools` array:
 
-```bash
-# Find the latest SDK docs directory
-ls ~/.copilot/pkg/universal/ | sort | tail -1
-# Then read from: ~/.copilot/pkg/universal/{latest}/copilot-sdk/
+```js
+const session = await joinSession({
+  tools: [
+    {
+      name: "my_tool",
+      description: "Does something useful",
+      parameters: {
+        type: "object",
+        properties: {
+          input: { type: "string", description: "Tool input" },
+        },
+        required: ["input"],
+      },
+      handler: async (args, invocation) => {
+        // invocation.sessionId
+        // invocation.toolCallId
+        // invocation.toolName
+        return `Processed: ${args.input}`;
+      },
+    },
+  ],
+});
 ```
 
-Key files inside `copilot-sdk/`:
-```
-├── docs/
-│   ├── agent-author.md      — Step-by-step guide for agents writing extensions
-│   ├── examples.md           — Practical extension examples (skeleton, tools, hooks)
-│   └── extensions.md         — How extensions work (lifecycle, JSON-RPC, registration)
-├── generated/
-│   ├── session-events.d.ts   — All session event types (generated from schema)
-│   └── rpc.d.ts              — Full JSON-RPC API type definitions
-├── index.d.ts                — Main SDK type exports
-├── client.d.ts               — CopilotClient types
-├── session.d.ts              — CopilotSession types
-├── extension.d.ts            — Extension API types (joinSession, hooks)
-└── types.d.ts                — Shared types
+Rules:
+- Tool names must be globally unique across all loaded extensions
+- Handlers return either a string or:
+  ```js
+  { textResultForLlm: "message", resultType: "success" }
+  ```
+- Throwing from a handler produces a failure result
+- Use JSON Schema for parameters
+
+## Hooks
+
+Available hook names:
+
+```js
+hooks: {
+  onUserPromptSubmitted: async (input, invocation) => { ... },
+  onPreToolUse: async (input, invocation) => { ... },
+  onPostToolUse: async (input, invocation) => { ... },
+  onSessionStart: async (input, invocation) => { ... },
+  onSessionEnd: async (input, invocation) => { ... },
+  onErrorOccurred: async (input, invocation) => { ... },
+}
 ```
 
-**Read these first** when building or debugging extensions — they are the authoritative source for the SDK API surface, event schemas, and RPC protocol.
+Most useful patterns:
+
+### Add hidden context
+
+```js
+hooks: {
+  onUserPromptSubmitted: async (input) => ({
+    additionalContext: "Follow our repo conventions.",
+  }),
+}
+```
+
+### Deny a dangerous tool call
+
+```js
+hooks: {
+  onPreToolUse: async (input) => {
+    if (input.toolName === "bash") {
+      const cmd = String(input.toolArgs?.command || "");
+      if (/rm\s+-rf/i.test(cmd) || /Remove-Item\s+.*-Recurse/i.test(cmd)) {
+        return {
+          permissionDecision: "deny",
+          permissionDecisionReason: "Destructive commands are not allowed.",
+        };
+      }
+    }
+  },
+}
+```
+
+### Add startup context
+
+```js
+hooks: {
+  onSessionStart: async () => ({
+    additionalContext: "Remember to write tests for all changes.",
+  }),
+}
+```
+
+## Session object
+
+`joinSession()` returns a `session` object with the APIs that matter most in extensions:
+
+### Log to the timeline
+
+```js
+await session.log("Extension ready");
+await session.log("Rate limit approaching", { level: "warning" });
+await session.log("Temporary status", { ephemeral: true });
+```
+
+### Send a prompt programmatically
+
+```js
+await session.send({ prompt: "Analyze the test results." });
+const response = await session.sendAndWait({ prompt: "What is 2 + 2?" });
+```
+
+### Subscribe to events
+
+```js
+session.on("assistant.message", (event) => {
+  // event.data.content
+});
+
+session.on("tool.execution_complete", (event) => {
+  // event.data.toolName, event.data.success, event.data.result
+});
+```
+
+Useful event types:
+- `assistant.message`
+- `tool.execution_start`
+- `tool.execution_complete`
+- `user.message`
+- `session.idle`
+- `session.error`
+- `permission.requested`
+- `session.shutdown`
+
+### Session metadata
+
+- `session.workspacePath` — path to the session workspace if available
+- `session.rpc` — low-level typed RPC access
+
+## Shelling out from extensions
+
+Extensions are often thin wrappers around local scripts or CLIs. On Windows in particular:
+
+```js
+import { exec } from "node:child_process";
+
+await new Promise((resolve) => {
+  exec("node scripts/my-tool.mjs", (err, stdout, stderr) => {
+    if (err) resolve(`Error: ${stderr || err.message}`);
+    else resolve(stdout);
+  });
+});
+```
+
+Notes:
+- Prefer `exec()` for `.cmd`/shell-style commands on Windows
+- If using PowerShell explicitly:
+  ```js
+  powershell -NoProfile -Command ...
+  ```
+- Keep stdout clean inside the extension process itself; return tool output from handlers
+
+## Gotchas
+
+- **stdout is reserved for JSON-RPC** — do not use `console.log()`. Use `session.log()`.
+- **Tool name collisions are fatal** — namespace your tools.
+- **Extensions reload on `/clear`** — any in-memory state is lost.
+- **Do not call `session.send()` synchronously from `onUserPromptSubmitted`** — use `setTimeout(..., 0)` if needed to avoid loops.
+- **Project extensions shadow user extensions** on name collision.
+- **Only immediate subdirectories of `.github/extensions/` are scanned**.
+
+## What changed from the old pattern
+
+The following are **stale for extensions** and should be removed on sight:
+- `CopilotClient`
+- `CopilotSession`
+- `approveAll` as a required default for extensions
+- `createSession(...)`
+- `defineTool(...)`
+- Scanning `~/.copilot/pkg` to import the SDK for extension code
+
+Those belong to a different authoring model. For extensions, use `joinSession()` directly.
+
+## SDK docs to read first
+
+These ship with the installed CLI and are the source of truth:
+
+```text
+~/.copilot/pkg/universal/<version>/copilot-sdk/docs/extensions.md
+~/.copilot/pkg/universal/<version>/copilot-sdk/docs/agent-author.md
+~/.copilot/pkg/universal/<version>/copilot-sdk/docs/examples.md
+```
+
+For exact types, read:
+
+```text
+~/.copilot/pkg/universal/<version>/copilot-sdk/extension.d.ts
+~/.copilot/pkg/universal/<version>/copilot-sdk/session.d.ts
+~/.copilot/pkg/universal/<version>/copilot-sdk/types.d.ts
+```
