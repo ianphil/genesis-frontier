@@ -5,7 +5,7 @@ description: Bootstrap a new AI agent mind. Use when user asks to "create a new 
 
 # New Mind
 
-Bootstrap a new AI agent mind from this parent mind's templates.
+Bootstrap a new AI agent mind — self-contained, no parent mind required.
 
 **Rules:**
 - Ask ONE question at a time. Wait for the answer.
@@ -15,39 +15,36 @@ Bootstrap a new AI agent mind from this parent mind's templates.
 
 ---
 
-## Phase 0: Capture Parent Location
+## Phase 1: Locate the Skill
 
-Before starting the interview, capture the current working directory as `{PARENT_MIND}`.
-This is the root of the mind you're running from — the source for templates, skills, and extensions.
+Before starting the interview, locate the new-mind skill directory. This contains the
+templates and bootstrap script.
+
+Search for the skill in these locations (in order):
+1. The current plugin/skill directory (if running from a plugin)
+2. `.github/skills/new-mind/` (repo-level)
+3. `~/.copilot/skills/new-mind/` (user-level)
 
 On Windows (PowerShell):
 ```powershell
-$PARENT_MIND = (Get-Location).Path
+$SKILL_DIR = (Get-ChildItem -Recurse -Filter "new-mind.js" -Path . | Select-Object -First 1).DirectoryName
 ```
 
 On macOS/Linux:
 ```bash
-PARENT_MIND=$(pwd)
+SKILL_DIR=$(find . -name "new-mind.js" -path "*/new-mind/*" -exec dirname {} \; | head -1)
 ```
 
-Verify the parent mind has the new-mind skill templates:
-
-On Windows (PowerShell):
-```powershell
-Test-Path "$PARENT_MIND\.github\skills\new-mind\templates"
-```
-
-On macOS/Linux:
+Verify the skill has templates:
 ```bash
-test -d "$PARENT_MIND/.github/skills/new-mind/templates" || echo "ERROR: Run this skill from a mind repo root"
+test -d "$SKILL_DIR/templates" || echo "ERROR: templates not found"
 ```
 
-Hold `{PARENT_MIND}` for all subsequent phases — template reads, skill copies, and extension
-copies all reference it.
+Hold `{SKILL_DIR}` for subsequent phases — template reads and the bootstrap script reference it.
 
 ---
 
-## Phase 1: Mind Type
+## Phase 2: Mind Type
 
 Ask:
 
@@ -65,7 +62,7 @@ Store their answer as `{MIND_TYPE}` (`repo` or `user`).
 
 ---
 
-## Phase 2: Location
+## Phase 3: Location
 
 **For repo minds**, ask:
 
@@ -84,7 +81,7 @@ Store as `{MIND_HOME}`.
 
 ---
 
-## Phase 3: Character
+## Phase 4: Character
 
 Ask:
 
@@ -106,7 +103,7 @@ Derive `{AGENT_NAME}` from `{CHARACTER}` in kebab-case (e.g., "jarvis", "donna-p
 
 ---
 
-## Phase 4: Role
+## Phase 5: Role
 
 Ask:
 
@@ -125,7 +122,7 @@ Store as `{ROLE}`.
 
 ---
 
-## Phase 5: Research Character
+## Phase 6: Research Character
 
 Before generating any files, research `{CHARACTER}` from `{CHARACTER_SOURCE}`:
 
@@ -138,14 +135,14 @@ Hold this research in context — it shapes SOUL.md, the agent file, and all gen
 
 ---
 
-## Phase 6: Generate the Mind
+## Phase 7: Generate the Mind
 
 Set `{MIND_DIR}` = `{MIND_PATH}` (repo mind) or `{MIND_HOME}` (user mind).
 
-Read templates from `{PARENT_MIND}/.github/skills/new-mind/templates/` for reference — they
+Read templates from `{SKILL_DIR}/templates/` for reference — they
 show the patterns and structure for each file. Use them as guides when writing creative blocks.
 
-### 6.1 Write Creative Blocks as Files
+### 7.1 Write Creative Blocks as Files
 
 Create a config directory at `{MIND_DIR}/.mind-config/`. Use your **file creation tool** (not
 shell commands) to write each creative block as a separate file. This avoids all escaping issues
@@ -158,7 +155,6 @@ with quotes, backticks, em-dashes, and other special characters in markdown.
   "type": "{repo|user}",
   "mindDir": "{MIND_DIR}",
   "agentName": "{AGENT_NAME}",
-  "parentMind": "{PARENT_MIND}",
   "userCopilotDir": "~/.copilot",
   "character": "{CHARACTER}",
   "characterSource": "{CHARACTER_SOURCE}",
@@ -182,17 +178,17 @@ Note: `userCopilotDir` is only needed for user minds. Omit it for repo minds.
 | `.mind-config/agent-method.md` | `agent-file-template.md` | Method section (capture/execute/triage for the role) |
 | `.mind-config/agent-principles.md` | `agent-file-template.md` | Operational principles specific to the role |
 
-### 6.2 Run the Bootstrap Script
+### 7.2 Run the Bootstrap Script
 
 ```bash
 cd {MIND_DIR}
 git init
-node {PARENT_MIND}/.github/skills/new-mind/new-mind.js create --config-dir .mind-config
+node {SKILL_DIR}/new-mind.js create --config-dir .mind-config
 ```
 
 The script reads the config directory, then handles all filesystem operations: directory creation,
-file generation, skill/extension copying, registry generation, and shared resource installation
-(for user minds, using the create-if-missing pattern).
+file generation, upgrade skill installation, and registry generation (pointing at genesis for
+future updates).
 
 The script outputs JSON with the list of created files. Verify it completed without errors.
 
@@ -204,7 +200,7 @@ rm -rf .mind-config
 
 ---
 
-## Phase 7: Commit & Remote
+## Phase 8: Commit & Remote
 
 ```bash
 cd {MIND_DIR}
@@ -225,44 +221,22 @@ gh repo create {AGENT_NAME} --private --source={MIND_DIR} --push
 
 ---
 
-## Phase 8: Register Child (optional)
-
-Ask if the user wants to register this new mind as a child of the current parent:
-
-> "Register this mind in the parent's knowledge base? I'll create a record at
-> `domains/minds/{AGENT_NAME}.md` so you can track all your minds from here."
-
-If yes, create `{PARENT_MIND}/domains/minds/{AGENT_NAME}.md`:
-
-```markdown
-# {CHARACTER} ({AGENT_NAME})
-
-- **Type**: {MIND_TYPE}
-- **Character**: {CHARACTER} ({CHARACTER_SOURCE})
-- **Role**: {ROLE}
-- **Location**: {MIND_DIR}
-- **Agent file**: {~/.copilot/agents/{AGENT_NAME}.agent.md (user) | {MIND_DIR}/.github/agents/{AGENT_NAME}.agent.md (repo)}
-- **Created**: {YYYY-MM-DD}
-- **Parent**: {parent agent name}
-```
-
-Where `{PARENT_MIND}` is the root of this (the parent) mind's repository.
-
----
-
 ## Phase 9: Activate
 
 **For repo minds**, tell the user:
 
 > "Your mind is alive. 🧬
 >
-> **Meet your agent.** Open `{MIND_DIR}` in a new terminal, run `copilot --experimental`,
-> and type `/agent` to select **{AGENT_NAME}**. Ask for your **daily report** — it's your
-> first skill in action.
+> **Meet your agent.** Open `{MIND_DIR}` in a new terminal, run `copilot`,
+> and type `/agent` to select **{AGENT_NAME}**. Start a conversation — tell it
+> about your work, your priorities, your team.
 >
-> **What's next?** Start talking. Tell it about your work, your priorities, your team.
-> Correct mistakes — every correction becomes a rule. It takes about a week to feel
-> genuinely useful."
+> **Get more skills.** Your mind ships with one skill: `upgrade`. Say
+> **"upgrade from genesis"** to pull in the full toolkit — commit, daily-report,
+> new-mind, and more. You only need to do this once.
+>
+> **What's next?** Correct mistakes — every correction becomes a rule.
+> It takes about a week to feel genuinely useful. Context compounds."
 
 **For user minds**, tell the user:
 
@@ -272,9 +246,12 @@ Where `{PARENT_MIND}` is the root of this (the parent) mind's repository.
 > - **Mind repo**: `{MIND_HOME}` — your identity (SOUL.md), memory, and knowledge
 > - **Shared tooling**: `~/.copilot/` — agent file, skills, extensions, registry (shared by all user-level agents)
 >
-> **To use it:** Open *any* directory. Run `copilot --experimental`. Type `/agent` and
+> **To use it:** Open *any* directory. Run `copilot`. Type `/agent` and
 > select **{AGENT_NAME}**. The agent will load its identity, then shell out to read its
 > memory from `{MIND_HOME}`.
+>
+> **Get more skills.** Say **"upgrade from genesis"** to pull in the full toolkit —
+> commit, daily-report, new-mind, and more. You only need to do this once.
 >
 > **The memory model:**
 > - All memory writes go to `{MIND_HOME}/.working-memory/`

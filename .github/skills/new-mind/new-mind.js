@@ -611,30 +611,18 @@ function generateMindIndex(config) {
     sections.push(
       "",
       "## Shared Tooling (at ~/.copilot/)",
-      "- `~/.copilot/skills/commit/` — stage, commit, push with memory observations",
-      "- `~/.copilot/skills/daily-report/` — morning briefing",
       "- `~/.copilot/skills/upgrade/` — pull updates from genesis",
-      "- `~/.copilot/skills/new-mind/` — bootstrap new minds",
-      "- `~/.copilot/extensions/cron/` — scheduled job execution",
-      "- `~/.copilot/extensions/canvas/` — display HTML in browser",
-      "- `~/.copilot/prompts/` — reusable prompt templates",
       "- `~/.copilot/registry.json` — extension and skill version manifest",
+      "",
+      "> Run **\"upgrade from genesis\"** to install more skills (commit, daily-report, new-mind) and extensions (cron, canvas).",
     );
   } else {
     sections.push(
       "",
       "## Skills",
-      "- `.github/skills/commit/` — stage, commit, push with memory observations",
-      "- `.github/skills/daily-report/` — morning briefing",
       "- `.github/skills/upgrade/` — pull updates from genesis",
-      "- `.github/skills/new-mind/` — bootstrap new minds",
       "",
-      "## Extensions",
-      "- `.github/extensions/cron/` — scheduled job execution",
-      "- `.github/extensions/canvas/` — display HTML in browser",
-      "",
-      "## Prompts",
-      "- `.github/prompts/` — reusable prompt templates",
+      "> Run **\"upgrade from genesis\"** to install more skills (commit, daily-report, new-mind) and extensions (cron, canvas).",
     );
   }
 
@@ -642,164 +630,60 @@ function generateMindIndex(config) {
   return sections.join("\n");
 }
 
-// ── File Operations ──────────────────────────────────────────────────────────
+// ── Bootstrap Resources ──────────────────────────────────────────────────────
 
-const SKILLS_TO_COPY = ["commit", "daily-report", "upgrade", "new-mind"];
-const EXTENSIONS_TO_COPY = ["cron", "canvas"];
-const PROMPTS_TO_COPY = [];
+function generateFreshRegistry(layout) {
+  const upgradePath = layout === "user"
+    ? "skills/upgrade"
+    : ".github/skills/upgrade";
 
-function copySkills(parentMind, destDir) {
-  const copied = [];
-  for (const skill of SKILLS_TO_COPY) {
-    const src = path.join(parentMind, ".github", "skills", skill);
-    const dest = path.join(destDir, skill);
-    if (fs.existsSync(src)) {
-      copyDirRecursive(src, dest);
-      copied.push(skill);
-    }
-  }
-  return copied;
-}
-
-function copyExtensions(parentMind, destDir) {
-  const copied = [];
-  for (const ext of EXTENSIONS_TO_COPY) {
-    const src = path.join(parentMind, ".github", "extensions", ext);
-    const dest = path.join(destDir, ext);
-    if (fs.existsSync(src)) {
-      copyDirRecursive(src, dest);
-      copied.push(ext);
-    }
-  }
-  return copied;
-}
-
-function copyPrompts(parentMind, destDir) {
-  const copied = [];
-  for (const prompt of PROMPTS_TO_COPY) {
-    const src = path.join(parentMind, ".github", "prompts", prompt);
-    if (fs.existsSync(src)) {
-      fs.mkdirSync(destDir, { recursive: true });
-      fs.copyFileSync(src, path.join(destDir, prompt));
-      copied.push(prompt);
-    }
-  }
-  return copied;
-}
-
-function generateRegistryObject(parentMind, layout) {
-  const parentRegistryPath = path.join(parentMind, ".github", "registry.json");
-  const parentRegistry = JSON.parse(fs.readFileSync(parentRegistryPath, "utf8"));
-
-  const registry = {
-    version: parentRegistry.version,
-    source: parentRegistry.source,
-    channel: parentRegistry.channel,
+  return {
+    version: "0.1.0",
+    source: "ianphil/genesis",
+    channel: "main",
+    extensions: {},
+    skills: {
+      upgrade: {
+        version: "0.6.0",
+        path: upgradePath,
+        description: "Pull updates from genesis template registry",
+      },
+    },
+    prompts: {},
   };
+}
 
-  registry.extensions = {};
-  for (const [name, entry] of Object.entries(parentRegistry.extensions || {})) {
-    registry.extensions[name] = {
-      version: entry.version,
-      path: mapPathForLayout(entry.path, layout),
-      description: entry.description,
-    };
+function installBundledUpgrade(scriptDir, destDir) {
+  const resourceDir = path.join(scriptDir, "resources", "upgrade");
+  if (!fs.existsSync(resourceDir)) {
+    return { action: "skipped", reason: "resources/upgrade not found" };
   }
-
-  registry.skills = {};
-  for (const [name, entry] of Object.entries(parentRegistry.skills || {})) {
-    registry.skills[name] = {
-      version: entry.version,
-      path: mapPathForLayout(entry.path, layout),
-      description: entry.description,
-    };
-  }
-
-  registry.prompts = {};
-  for (const [name, entry] of Object.entries(parentRegistry.prompts || {})) {
-    registry.prompts[name] = {
-      version: entry.version,
-      path: mapPathForLayout(entry.path, layout),
-      description: entry.description,
-    };
-  }
-
-  return registry;
+  fs.mkdirSync(destDir, { recursive: true });
+  copyDirRecursive(resourceDir, destDir);
+  return { action: "installed", name: "upgrade" };
 }
 
 // ── User Shared Resources ────────────────────────────────────────────────────
 
-function installSharedResources(parentMind, userCopilotDir) {
+function installSharedResources(scriptDir, userCopilotDir) {
   const log = [];
 
-  // Ensure directories
   fs.mkdirSync(path.join(userCopilotDir, "agents"), { recursive: true });
-  for (const skill of SKILLS_TO_COPY) {
-    fs.mkdirSync(path.join(userCopilotDir, "skills", skill), { recursive: true });
-  }
-  for (const ext of EXTENSIONS_TO_COPY) {
-    fs.mkdirSync(path.join(userCopilotDir, "extensions", ext), { recursive: true });
-  }
-  if (PROMPTS_TO_COPY.length > 0) {
-    fs.mkdirSync(path.join(userCopilotDir, "prompts"), { recursive: true });
-  }
+  fs.mkdirSync(path.join(userCopilotDir, "skills"), { recursive: true });
 
-  // Commit skill— use the user-level template instead of copying repo skill
-  const commitDest = path.join(userCopilotDir, "skills", "commit");
-  const commitSkillPath = path.join(commitDest, "SKILL.md");
-  if (!fs.existsSync(commitSkillPath)) {
-    const templatePath = path.join(
-      parentMind, ".github", "skills", "new-mind", "templates", "commit-user-template.md"
-    );
-    fs.copyFileSync(templatePath, commitSkillPath);
-    log.push({ action: "installed", type: "skill", name: "commit" });
+  // Install upgrade skill (skip if already present)
+  const upgradeDest = path.join(userCopilotDir, "skills", "upgrade");
+  if (!fs.existsSync(path.join(upgradeDest, "SKILL.md"))) {
+    const result = installBundledUpgrade(scriptDir, upgradeDest);
+    log.push({ ...result, type: "skill" });
   } else {
-    log.push({ action: "skipped", type: "skill", name: "commit" });
+    log.push({ action: "skipped", type: "skill", name: "upgrade" });
   }
 
-  // Other skills — copy directly from parent
-  for (const skill of SKILLS_TO_COPY.filter((s) => s !== "commit")) {
-    const dest = path.join(userCopilotDir, "skills", skill, "SKILL.md");
-    if (!fs.existsSync(dest)) {
-      const src = path.join(parentMind, ".github", "skills", skill);
-      copyDirRecursive(src, path.join(userCopilotDir, "skills", skill));
-      log.push({ action: "installed", type: "skill", name: skill });
-    } else {
-      log.push({ action: "skipped", type: "skill", name: skill });
-    }
-  }
-
-  // Extensions
-  for (const ext of EXTENSIONS_TO_COPY) {
-    const dest = path.join(userCopilotDir, "extensions", ext, "extension.mjs");
-    if (!fs.existsSync(dest)) {
-      const src = path.join(parentMind, ".github", "extensions", ext);
-      copyDirRecursive(src, path.join(userCopilotDir, "extensions", ext));
-      log.push({ action: "installed", type: "extension", name: ext });
-    } else {
-      log.push({ action: "skipped", type: "extension", name: ext });
-    }
-  }
-
-  // Prompts
-  for (const prompt of PROMPTS_TO_COPY) {
-    const dest = path.join(userCopilotDir, "prompts", prompt);
-    if (!fs.existsSync(dest)) {
-      const src = path.join(parentMind, ".github", "prompts", prompt);
-      if (fs.existsSync(src)) {
-        fs.mkdirSync(path.dirname(dest), { recursive: true });
-        fs.copyFileSync(src, dest);
-        log.push({ action: "installed", type: "prompt", name: prompt });
-      }
-    } else {
-      log.push({ action: "skipped", type: "prompt", name: prompt });
-    }
-  }
-
-  // Registry
+  // Registry (skip if already present)
   const registryPath = path.join(userCopilotDir, "registry.json");
   if (!fs.existsSync(registryPath)) {
-    const registry = generateRegistryObject(parentMind, "user");
+    const registry = generateFreshRegistry("user");
     fs.writeFileSync(registryPath, JSON.stringify(registry, null, 2) + "\n");
     log.push({ action: "installed", type: "registry", name: "registry.json" });
   } else {
@@ -814,20 +698,21 @@ function installSharedResources(parentMind, userCopilotDir) {
 function createMind(config) {
   // Expand tilde in all path fields before use
   const mindDir = config.mindDir ? expandTilde(config.mindDir) : config.mindDir;
-  const parentMind = config.parentMind ? expandTilde(config.parentMind) : config.parentMind;
   const agentName = config.agentName;
   const type = config.type;
   const expandedConfig = {
     ...config,
     mindDir,
-    parentMind,
     userCopilotDir: config.userCopilotDir ? expandTilde(config.userCopilotDir) : undefined,
   };
   const result = { files: [], warnings: [] };
 
+  // Resolve script directory for bundled resources
+  const scriptDir = config.scriptDir || path.dirname(__filename);
+
   // Validate required fields
   const required = [
-    "type", "mindDir", "agentName", "parentMind",
+    "type", "mindDir", "agentName",
     "character", "characterSource", "role", "agentDescription",
     "soulOpening", "soulMission", "soulCoreTruths", "soulBoundaries", "soulVibe",
     "agentRole", "agentMethod", "agentPrinciples",
@@ -885,22 +770,15 @@ function createMind(config) {
     { path: ".working-memory/log.md", type: "file" }
   );
 
-  // 6. Copy skills and extensions (repo only)
+  // 6. Install upgrade skill and registry (repo only)
   if (type === "repo") {
-    const skillsDest = path.join(mindDir, ".github", "skills");
-    const copiedSkills = copySkills(parentMind, skillsDest);
-    result.files.push(...copiedSkills.map((s) => ({ path: `.github/skills/${s}/`, type: "directory" })));
+    const upgradeDest = path.join(mindDir, ".github", "skills", "upgrade");
+    const upgradeResult = installBundledUpgrade(scriptDir, upgradeDest);
+    if (upgradeResult.action === "installed") {
+      result.files.push({ path: ".github/skills/upgrade/", type: "directory" });
+    }
 
-    const extDest = path.join(mindDir, ".github", "extensions");
-    const copiedExts = copyExtensions(parentMind, extDest);
-    result.files.push(...copiedExts.map((e) => ({ path: `.github/extensions/${e}/`, type: "directory" })));
-
-    const promptsDest = path.join(mindDir, ".github", "prompts");
-    const copiedPrompts = copyPrompts(parentMind, promptsDest);
-    result.files.push(...copiedPrompts.map((p) => ({ path: `.github/prompts/${p}`, type: "file" })));
-
-    // 7. Generate registry (repo)
-    const registry = generateRegistryObject(parentMind, "repo");
+    const registry = generateFreshRegistry("repo");
     fs.writeFileSync(
       path.join(mindDir, ".github", "registry.json"),
       JSON.stringify(registry, null, 2) + "\n"
@@ -908,9 +786,9 @@ function createMind(config) {
     result.files.push({ path: ".github/registry.json", type: "file" });
   }
 
-  // 8. Install shared resources (user only)
+  // 7. Install shared resources (user only)
   if (type === "user") {
-    const sharedLog = installSharedResources(parentMind, expandedConfig.userCopilotDir);
+    const sharedLog = installSharedResources(scriptDir, expandedConfig.userCopilotDir);
     result.sharedResources = sharedLog;
   }
 
@@ -935,10 +813,8 @@ module.exports = {
   generateRules,
   generateLog,
   generateMindIndex,
-  copySkills,
-  copyExtensions,
-  copyPrompts,
-  generateRegistryObject,
+  generateFreshRegistry,
+  installBundledUpgrade,
   installSharedResources,
   copyDirRecursive,
   mapPathForLayout,
@@ -947,9 +823,6 @@ module.exports = {
   COMMON_DIRS,
   REPO_DIRS,
   USER_DIRS,
-  SKILLS_TO_COPY,
-  EXTENSIONS_TO_COPY,
-  PROMPTS_TO_COPY,
   CREATIVE_BLOCK_FILES,
 };
 

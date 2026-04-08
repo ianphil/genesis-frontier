@@ -19,17 +19,14 @@ const {
   generateRules,
   generateLog,
   generateMindIndex,
-  copySkills,
-  copyExtensions,
-  generateRegistryObject,
+  generateFreshRegistry,
+  installBundledUpgrade,
   installSharedResources,
   mapPathForLayout,
   readConfigDir,
   COMMON_DIRS,
   REPO_DIRS,
   USER_DIRS,
-  SKILLS_TO_COPY,
-  EXTENSIONS_TO_COPY,
   CREATIVE_BLOCK_FILES,
   expandTilde,
 } = require("./new-mind.js");
@@ -58,52 +55,13 @@ const TEST_CONFIG_BASE = {
     "- **Test before commit.** Always.\n- **Read the diff.** Don't guess what changed.",
 };
 
-function makeTempParent() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "genesis-parent-"));
-
-  // Create a minimal parent mind with skills, extensions, and registry
-  const registry = {
-    version: "0.13.0",
-    source: "test/genesis",
-    channel: "main",
-    extensions: {
-      cron: { version: "0.1.4", path: ".github/extensions/cron", description: "Cron" },
-      canvas: { version: "0.1.3", path: ".github/extensions/canvas", description: "Canvas" },
-    },
-    skills: {
-      commit: { version: "0.1.0", path: ".github/skills/commit", description: "Commit" },
-      "daily-report": { version: "0.1.0", path: ".github/skills/daily-report", description: "Daily report" },
-      upgrade: { version: "0.4.0", path: ".github/skills/upgrade", description: "Upgrade" },
-      "new-mind": { version: "0.1.0", path: ".github/skills/new-mind", description: "New mind" },
-    },
-  };
-
-  // Registry
-  fs.mkdirSync(path.join(root, ".github"), { recursive: true });
-  fs.writeFileSync(path.join(root, ".github", "registry.json"), JSON.stringify(registry, null, 2));
-
-  // Skills with stub SKILL.md files
-  for (const skill of SKILLS_TO_COPY) {
-    const skillDir = path.join(root, ".github", "skills", skill);
-    fs.mkdirSync(skillDir, { recursive: true });
-    fs.writeFileSync(path.join(skillDir, "SKILL.md"), `# ${skill}\nStub skill.`);
-  }
-
-  // Extensions with stub extension.mjs files
-  for (const ext of EXTENSIONS_TO_COPY) {
-    const extDir = path.join(root, ".github", "extensions", ext);
-    fs.mkdirSync(extDir, { recursive: true });
-    fs.writeFileSync(path.join(extDir, "extension.mjs"), `// ${ext} stub`);
-  }
-
-  // Commit user template (needed for user minds)
-  const templateDir = path.join(root, ".github", "skills", "new-mind", "templates");
-  fs.mkdirSync(templateDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(templateDir, "commit-user-template.md"),
-    "---\nname: commit\ndescription: User-level commit skill.\n---\n# Commit (User-Level)\nStub."
-  );
-
+function makeTempSkillDir() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "skill-dir-"));
+  // Create a resources/upgrade/ directory with stub files
+  const upgradeDir = path.join(root, "resources", "upgrade");
+  fs.mkdirSync(upgradeDir, { recursive: true });
+  fs.writeFileSync(path.join(upgradeDir, "SKILL.md"), "---\nname: upgrade\ndescription: Pull updates from genesis.\n---\n# Upgrade\nStub upgrade skill.");
+  fs.writeFileSync(path.join(upgradeDir, "upgrade.js"), "// upgrade.js stub\nmodule.exports = {};");
   return root;
 }
 
@@ -131,7 +89,6 @@ describe("readConfigDir", () => {
       type: "repo",
       mindDir: "/tmp/test-mind",
       agentName: "test-bot",
-      parentMind: "/tmp/parent",
       character: "TestBot",
       characterSource: "Unit Tests",
       role: "Testing Partner",
@@ -415,7 +372,6 @@ describe("createDirectoryStructure", () => {
       for (const dir of REPO_DIRS) {
         assert.ok(fs.existsSync(path.join(root, dir)), `missing ${dir}`);
       }
-      // Should NOT have user-specific dirs
       assert.ok(!fs.existsSync(path.join(root, "domains", "minds")), "repo should not have domains/minds");
     } finally {
       cleanup(root);
@@ -432,7 +388,6 @@ describe("createDirectoryStructure", () => {
       for (const dir of USER_DIRS) {
         assert.ok(fs.existsSync(path.join(root, dir)), `missing ${dir}`);
       }
-      // Should NOT have .github/ dirs
       assert.ok(!fs.existsSync(path.join(root, ".github")), "user mind should not have .github/");
     } finally {
       cleanup(root);
@@ -498,105 +453,100 @@ describe("generateLog", () => {
   });
 });
 
-// ── Registry Tests ───────────────────────────────────────────────────────────
+// ── Fresh Registry Tests ─────────────────────────────────────────────────────
 
-describe("generateRegistryObject", () => {
-  it("reads parent registry and preserves versions", () => {
-    const parent = makeTempParent();
+describe("generateFreshRegistry", () => {
+  it("produces a registry pointing at genesis for repo layout", () => {
+    const registry = generateFreshRegistry("repo");
+    assert.equal(registry.source, "ianphil/genesis");
+    assert.equal(registry.channel, "main");
+    assert.equal(registry.version, "0.1.0");
+    assert.ok(registry.skills.upgrade, "missing upgrade skill entry");
+    assert.equal(registry.skills.upgrade.path, ".github/skills/upgrade");
+    assert.deepEqual(registry.extensions, {});
+    assert.deepEqual(registry.prompts, {});
+  });
+
+  it("uses user-layout paths for user layout", () => {
+    const registry = generateFreshRegistry("user");
+    assert.equal(registry.skills.upgrade.path, "skills/upgrade");
+  });
+
+  it("includes only upgrade skill (no commit, daily-report, etc.)", () => {
+    const registry = generateFreshRegistry("repo");
+    const skillNames = Object.keys(registry.skills);
+    assert.deepEqual(skillNames, ["upgrade"], "should contain only upgrade");
+  });
+});
+
+// ── Bundled Upgrade Tests ────────────────────────────────────────────────────
+
+describe("installBundledUpgrade", () => {
+  it("copies upgrade from resources/ to destination", () => {
+    const skillDir = makeTempSkillDir();
+    const dest = fs.mkdtempSync(path.join(os.tmpdir(), "upgrade-dest-"));
     try {
-      const registry = generateRegistryObject(parent, "repo");
-      assert.equal(registry.version, "0.13.0");
-      assert.equal(registry.source, "test/genesis");
-      assert.equal(registry.extensions.cron.version, "0.1.4");
-      assert.equal(registry.skills.commit.version, "0.1.0");
+      const result = installBundledUpgrade(skillDir, path.join(dest, "upgrade"));
+      assert.equal(result.action, "installed");
+      assert.ok(fs.existsSync(path.join(dest, "upgrade", "SKILL.md")), "missing SKILL.md");
+      assert.ok(fs.existsSync(path.join(dest, "upgrade", "upgrade.js")), "missing upgrade.js");
     } finally {
-      cleanup(parent);
+      cleanup(skillDir, dest);
     }
   });
 
-  it("keeps .github/ paths for repo layout", () => {
-    const parent = makeTempParent();
+  it("returns skipped when resources/upgrade/ is missing", () => {
+    const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), "empty-skill-"));
+    const dest = fs.mkdtempSync(path.join(os.tmpdir(), "upgrade-dest2-"));
     try {
-      const registry = generateRegistryObject(parent, "repo");
-      assert.equal(registry.extensions.cron.path, ".github/extensions/cron");
-      assert.equal(registry.skills.commit.path, ".github/skills/commit");
+      const result = installBundledUpgrade(emptyDir, path.join(dest, "upgrade"));
+      assert.equal(result.action, "skipped");
     } finally {
-      cleanup(parent);
-    }
-  });
-
-  it("strips .github/ paths for user layout", () => {
-    const parent = makeTempParent();
-    try {
-      const registry = generateRegistryObject(parent, "user");
-      assert.equal(registry.extensions.cron.path, "extensions/cron");
-      assert.equal(registry.skills.commit.path, "skills/commit");
-    } finally {
-      cleanup(parent);
+      cleanup(emptyDir, dest);
     }
   });
 });
 
-// ── Copy Operations ──────────────────────────────────────────────────────────
+// ── Mind Index Tests ─────────────────────────────────────────────────────────
 
-describe("copySkills", () => {
-  it("copies all skills from parent", () => {
-    const parent = makeTempParent();
-    const dest = fs.mkdtempSync(path.join(os.tmpdir(), "skills-dest-"));
-    try {
-      const copied = copySkills(parent, dest);
-      assert.deepEqual(copied.sort(), SKILLS_TO_COPY.slice().sort());
-      for (const skill of SKILLS_TO_COPY) {
-        assert.ok(
-          fs.existsSync(path.join(dest, skill, "SKILL.md")),
-          `missing ${skill}/SKILL.md`
-        );
-      }
-    } finally {
-      cleanup(parent, dest);
-    }
+describe("generateMindIndex", () => {
+  it("lists only upgrade skill for repo minds", () => {
+    const index = generateMindIndex({ ...TEST_CONFIG_BASE, type: "repo", mindDir: "/tmp/test" });
+    assert.ok(index.includes("upgrade"), "should mention upgrade");
+    assert.ok(index.includes("upgrade from genesis"), "should mention upgrade from genesis");
+    assert.ok(!index.includes("commit/"), "should NOT list commit");
+    assert.ok(!index.includes("daily-report/"), "should NOT list daily-report");
+    assert.ok(!index.includes("cron/"), "should NOT list cron");
+    assert.ok(!index.includes("canvas/"), "should NOT list canvas");
   });
-});
 
-describe("copyExtensions", () => {
-  it("copies all extensions from parent", () => {
-    const parent = makeTempParent();
-    const dest = fs.mkdtempSync(path.join(os.tmpdir(), "ext-dest-"));
-    try {
-      const copied = copyExtensions(parent, dest);
-      assert.deepEqual(copied.sort(), EXTENSIONS_TO_COPY.slice().sort());
-      for (const ext of EXTENSIONS_TO_COPY) {
-        assert.ok(
-          fs.existsSync(path.join(dest, ext, "extension.mjs")),
-          `missing ${ext}/extension.mjs`
-        );
-      }
-    } finally {
-      cleanup(parent, dest);
-    }
+  it("lists only upgrade skill for user minds", () => {
+    const index = generateMindIndex({ ...TEST_CONFIG_BASE, type: "user", mindDir: "/tmp/test" });
+    assert.ok(index.includes("upgrade"), "should mention upgrade");
+    assert.ok(!index.includes("commit/"), "should NOT list commit");
+    assert.ok(!index.includes("new-mind/"), "should NOT list new-mind");
   });
 });
 
 // ── E2E: Repo Mind Creation ──────────────────────────────────────────────────
 
 describe("repo mind creation", () => {
-  let parent, mindDir;
+  let skillDir, mindDir;
 
   before(() => {
-    parent = makeTempParent();
+    skillDir = makeTempSkillDir();
     mindDir = fs.mkdtempSync(path.join(os.tmpdir(), "repo-mind-"));
-    // Remove the temp dir so createMind can create it fresh
     fs.rmSync(mindDir, { recursive: true });
   });
 
-  after(() => cleanup(parent, mindDir));
+  after(() => cleanup(skillDir, mindDir));
 
-  it("creates a complete repo mind", () => {
+  it("creates a complete repo mind without parent", () => {
     const config = {
       ...TEST_CONFIG_BASE,
       type: "repo",
       mindDir,
-      parentMind: parent,
+      scriptDir: skillDir,
     };
 
     const result = createMind(config);
@@ -609,14 +559,11 @@ describe("repo mind creation", () => {
     for (const dir of REPO_DIRS) {
       assert.ok(fs.existsSync(path.join(mindDir, dir)), `missing dir: ${dir}`);
     }
-    assert.ok(!fs.existsSync(path.join(mindDir, "domains", "minds")),
-      "repo mind should NOT have domains/minds");
 
     // SOUL.md
     const soul = fs.readFileSync(path.join(mindDir, "SOUL.md"), "utf8");
     assert.ok(soul.includes("TestBot"), "SOUL.md missing character name");
     assert.ok(soul.includes("## Continuity"), "SOUL.md missing Continuity");
-    assert.ok(soul.includes("This file is yours to evolve"), "SOUL.md missing evolution clause");
 
     // Agent file
     const agentFile = path.join(mindDir, ".github", "agents", "test-bot.agent.md");
@@ -624,34 +571,33 @@ describe("repo mind creation", () => {
     const agentContent = fs.readFileSync(agentFile, "utf8");
     assert.ok(agentContent.includes("name: test-bot"), "agent file missing name");
     assert.ok(agentContent.includes("## Memory"), "agent file missing Memory section");
-    assert.ok(agentContent.includes("## Session Handover"), "agent file missing Session Handover");
 
     // copilot-instructions.md
-    const ci = path.join(mindDir, ".github", "copilot-instructions.md");
-    assert.ok(fs.existsSync(ci), "missing copilot-instructions.md");
+    assert.ok(fs.existsSync(path.join(mindDir, ".github", "copilot-instructions.md")),
+      "missing copilot-instructions.md");
 
-    // Skills
-    for (const skill of SKILLS_TO_COPY) {
-      assert.ok(
-        fs.existsSync(path.join(mindDir, ".github", "skills", skill, "SKILL.md")),
-        `missing skill: ${skill}`
-      );
-    }
+    // Only upgrade skill installed
+    assert.ok(
+      fs.existsSync(path.join(mindDir, ".github", "skills", "upgrade", "SKILL.md")),
+      "missing upgrade skill"
+    );
+    assert.ok(
+      !fs.existsSync(path.join(mindDir, ".github", "skills", "commit")),
+      "commit should NOT be installed"
+    );
+    assert.ok(
+      !fs.existsSync(path.join(mindDir, ".github", "extensions", "cron")),
+      "cron should NOT be installed"
+    );
 
-    // Extensions
-    for (const ext of EXTENSIONS_TO_COPY) {
-      assert.ok(
-        fs.existsSync(path.join(mindDir, ".github", "extensions", ext, "extension.mjs")),
-        `missing extension: ${ext}`
-      );
-    }
-
-    // Registry
+    // Fresh registry pointing at genesis
     const registryPath = path.join(mindDir, ".github", "registry.json");
     assert.ok(fs.existsSync(registryPath), "missing registry.json");
     const registry = JSON.parse(fs.readFileSync(registryPath, "utf8"));
-    assert.equal(registry.version, "0.13.0");
-    assert.ok(registry.extensions.cron.path.startsWith(".github/"), "repo registry should have .github/ paths");
+    assert.equal(registry.source, "ianphil/genesis");
+    assert.equal(registry.channel, "main");
+    assert.ok(registry.skills.upgrade, "registry should have upgrade skill");
+    assert.deepEqual(registry.extensions, {}, "registry should have no extensions");
 
     // Working memory
     assert.ok(fs.existsSync(path.join(mindDir, ".working-memory", "memory.md")), "missing memory.md");
@@ -666,16 +612,16 @@ describe("repo mind creation", () => {
 // ── E2E: User Mind Creation ──────────────────────────────────────────────────
 
 describe("user mind creation", () => {
-  let parent, mindDir, userCopilotDir;
+  let skillDir, mindDir, userCopilotDir;
 
   before(() => {
-    parent = makeTempParent();
+    skillDir = makeTempSkillDir();
     mindDir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "user-mind-")), "mind");
     userCopilotDir = fs.mkdtempSync(path.join(os.tmpdir(), "fake-copilot-"));
   });
 
   after(() => {
-    cleanup(parent, path.dirname(mindDir), userCopilotDir);
+    cleanup(skillDir, path.dirname(mindDir), userCopilotDir);
   });
 
   it("creates a complete user mind with NO .github/", () => {
@@ -683,8 +629,8 @@ describe("user mind creation", () => {
       ...TEST_CONFIG_BASE,
       type: "user",
       mindDir,
-      parentMind: parent,
       userCopilotDir,
+      scriptDir: skillDir,
     };
 
     const result = createMind(config);
@@ -708,42 +654,32 @@ describe("user mind creation", () => {
     const agentContent = fs.readFileSync(agentFile, "utf8");
     assert.ok(agentContent.includes(`MIND_HOME: ${mindDir}`), "agent file missing MIND_HOME");
     assert.ok(agentContent.includes("NON-NEGOTIABLE"), "agent file missing NON-NEGOTIABLE");
-    assert.ok(agentContent.includes(`cat ${mindDir}/SOUL.md`), "agent file missing cat SOUL.md");
 
     // NO copilot-instructions.md
     assert.ok(!fs.existsSync(path.join(mindDir, ".github", "copilot-instructions.md")),
       "user mind should NOT have copilot-instructions.md");
 
-    // Shared skills at userCopilotDir
-    for (const skill of SKILLS_TO_COPY) {
-      assert.ok(
-        fs.existsSync(path.join(userCopilotDir, "skills", skill, "SKILL.md")),
-        `missing shared skill: ${skill}`
-      );
-    }
-
-    // Commit skill should be user template, not copied from parent
-    const commitContent = fs.readFileSync(
-      path.join(userCopilotDir, "skills", "commit", "SKILL.md"), "utf8"
+    // Only upgrade skill at userCopilotDir
+    assert.ok(
+      fs.existsSync(path.join(userCopilotDir, "skills", "upgrade", "SKILL.md")),
+      "missing shared upgrade skill"
     );
-    assert.ok(commitContent.includes("User-Level"), "commit skill should be user-level template");
+    assert.ok(
+      !fs.existsSync(path.join(userCopilotDir, "skills", "commit")),
+      "commit should NOT be installed"
+    );
+    assert.ok(
+      !fs.existsSync(path.join(userCopilotDir, "extensions")),
+      "no extensions should be installed"
+    );
 
-    // Shared extensions at userCopilotDir
-    for (const ext of EXTENSIONS_TO_COPY) {
-      assert.ok(
-        fs.existsSync(path.join(userCopilotDir, "extensions", ext, "extension.mjs")),
-        `missing shared extension: ${ext}`
-      );
-    }
-
-    // Registry at userCopilotDir with user-layout paths
+    // Registry at userCopilotDir
     const registryPath = path.join(userCopilotDir, "registry.json");
     assert.ok(fs.existsSync(registryPath), "missing shared registry");
     const registry = JSON.parse(fs.readFileSync(registryPath, "utf8"));
-    assert.equal(registry.extensions.cron.path, "extensions/cron",
+    assert.equal(registry.source, "ianphil/genesis");
+    assert.equal(registry.skills.upgrade.path, "skills/upgrade",
       "user registry should NOT have .github/ prefix");
-    assert.equal(registry.skills.commit.path, "skills/commit",
-      "user registry skills should NOT have .github/ prefix");
 
     // Working memory — Mind Location section
     const memory = fs.readFileSync(path.join(mindDir, ".working-memory", "memory.md"), "utf8");
@@ -760,94 +696,42 @@ describe("user mind creation", () => {
   });
 });
 
-// ── E2E: Tilde Expansion in User Mind ────────────────────────────────────────
-
-describe("user mind creation with tilde paths", () => {
-  let parent, mindDir, realCopilotDir;
-
-  before(() => {
-    parent = makeTempParent();
-    mindDir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "tilde-mind-")), "mind");
-    realCopilotDir = fs.mkdtempSync(path.join(os.tmpdir(), "tilde-copilot-"));
-  });
-
-  after(() => {
-    cleanup(parent, path.dirname(mindDir), realCopilotDir);
-  });
-
-  it("expands ~ in userCopilotDir and writes to correct location", () => {
-    // Simulate what the agent does: pass "~/.copilot" style path
-    // We can't actually use ~ in tests (it expands to the real home dir),
-    // so we test that expandTilde is applied by checking the function behavior
-    // and then test createMind with the tilde-prefixed path mock.
-    
-    // First verify expandTilde works on ~
-    const expanded = expandTilde("~/.copilot");
-    assert.strictEqual(expanded, path.join(os.homedir(), ".copilot"));
-
-    // For the E2E test, use the resolved path (since tilde expansion
-    // would write to the real homedir, which we don't want in tests)
-    const config = {
-      ...TEST_CONFIG_BASE,
-      type: "user",
-      mindDir,
-      parentMind: parent,
-      userCopilotDir: realCopilotDir,
-    };
-    const result = createMind(config);
-    assert.ok(!result.error, `createMind failed: ${result.error}`);
-
-    // Verify agent file is at the RESOLVED location, not a literal tilde dir
-    const agentPath = path.join(realCopilotDir, "agents", "test-bot.agent.md");
-    assert.ok(fs.existsSync(agentPath), "agent file must exist at resolved path");
-
-    // Verify NO literal tilde directory was created in the mind dir
-    assert.ok(!fs.existsSync(path.join(mindDir, "~")), "no literal ~ directory should exist in mind dir");
-  });
-});
-
 // ── Shared Resources Idempotency ─────────────────────────────────────────────
 
 describe("user shared resources idempotency", () => {
   it("does not overwrite existing resources", () => {
-    const parent = makeTempParent();
+    const skillDir = makeTempSkillDir();
     const userCopilotDir = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-idem-"));
 
     try {
-      // Pre-populate with an existing commit skill
-      const commitDir = path.join(userCopilotDir, "skills", "commit");
-      fs.mkdirSync(commitDir, { recursive: true });
-      const existingContent = "# Existing commit skill — DO NOT OVERWRITE";
-      fs.writeFileSync(path.join(commitDir, "SKILL.md"), existingContent);
+      // Pre-populate with an existing upgrade skill
+      const upgradeDir = path.join(userCopilotDir, "skills", "upgrade");
+      fs.mkdirSync(upgradeDir, { recursive: true });
+      const existingContent = "# Existing upgrade skill — DO NOT OVERWRITE";
+      fs.writeFileSync(path.join(upgradeDir, "SKILL.md"), existingContent);
 
       // Pre-populate with an existing registry
       const existingRegistry = JSON.stringify({ version: "0.0.1", custom: true });
       fs.writeFileSync(path.join(userCopilotDir, "registry.json"), existingRegistry);
 
       // Run installSharedResources
-      const log = installSharedResources(parent, userCopilotDir);
+      const log = installSharedResources(skillDir, userCopilotDir);
 
-      // Commit skill should NOT be overwritten
-      const commitAfter = fs.readFileSync(path.join(commitDir, "SKILL.md"), "utf8");
-      assert.equal(commitAfter, existingContent, "existing commit skill was overwritten!");
+      // Upgrade skill should NOT be overwritten
+      const upgradeAfter = fs.readFileSync(path.join(upgradeDir, "SKILL.md"), "utf8");
+      assert.equal(upgradeAfter, existingContent, "existing upgrade skill was overwritten!");
 
       // Registry should NOT be overwritten
       const registryAfter = fs.readFileSync(path.join(userCopilotDir, "registry.json"), "utf8");
       assert.equal(registryAfter, existingRegistry, "existing registry was overwritten!");
 
-      // Other skills SHOULD be installed
-      assert.ok(
-        fs.existsSync(path.join(userCopilotDir, "skills", "daily-report", "SKILL.md")),
-        "daily-report should be installed"
-      );
-
-      // Log should show skipped for commit and registry
-      const commitLog = log.find((l) => l.name === "commit");
-      assert.equal(commitLog.action, "skipped", "commit should be skipped");
+      // Log should show skipped for both
+      const upgradeLog = log.find((l) => l.name === "upgrade");
+      assert.equal(upgradeLog.action, "skipped", "upgrade should be skipped");
       const registryLog = log.find((l) => l.name === "registry.json");
       assert.equal(registryLog.action, "skipped", "registry should be skipped");
     } finally {
-      cleanup(parent, userCopilotDir);
+      cleanup(skillDir, userCopilotDir);
     }
   });
 });
@@ -855,10 +739,10 @@ describe("user shared resources idempotency", () => {
 // ── E2E: Config Directory Mode ───────────────────────────────────────────────
 
 describe("config directory E2E", () => {
-  let parent, mindDir, configDir;
+  let skillDir, mindDir, configDir;
 
   before(() => {
-    parent = makeTempParent();
+    skillDir = makeTempSkillDir();
     mindDir = fs.mkdtempSync(path.join(os.tmpdir(), "configdir-mind-"));
     fs.rmSync(mindDir, { recursive: true });
     configDir = fs.mkdtempSync(path.join(os.tmpdir(), "mind-config-e2e-"));
@@ -870,7 +754,7 @@ describe("config directory E2E", () => {
         type: "repo",
         mindDir,
         agentName: "config-dir-bot",
-        parentMind: parent,
+        scriptDir: skillDir,
         character: "DirBot",
         characterSource: "E2E Tests",
         role: "Testing Partner",
@@ -889,7 +773,7 @@ describe("config directory E2E", () => {
     fs.writeFileSync(path.join(configDir, "agent-principles.md"), "- **Check before creating.** Always.");
   });
 
-  after(() => cleanup(parent, mindDir, configDir));
+  after(() => cleanup(skillDir, mindDir, configDir));
 
   it("creates a complete mind from config directory", () => {
     const config = readConfigDir(configDir);
@@ -925,12 +809,28 @@ describe("createMind validation", () => {
     assert.ok(result.error.includes("Missing required field"), "error should mention missing field");
   });
 
+  it("does NOT require parentMind", () => {
+    const tmpMind = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "val-test-")), "mind");
+    const skillDir = makeTempSkillDir();
+    try {
+      const result = createMind({
+        ...TEST_CONFIG_BASE,
+        type: "repo",
+        mindDir: tmpMind,
+        scriptDir: skillDir,
+      });
+      // Should succeed — parentMind is not required
+      assert.ok(!result.error, `should not fail without parentMind: ${result.error}`);
+    } finally {
+      cleanup(path.dirname(tmpMind), skillDir);
+    }
+  });
+
   it("rejects user mind without userCopilotDir", () => {
     const result = createMind({
       ...TEST_CONFIG_BASE,
       type: "user",
       mindDir: "/tmp/x",
-      parentMind: "/tmp/parent",
     });
     assert.ok(result.error, "should return error for missing userCopilotDir");
     assert.ok(result.error.includes("userCopilotDir"), "error should mention userCopilotDir");
@@ -941,88 +841,22 @@ describe("createMind validation", () => {
       ...TEST_CONFIG_BASE,
       type: "invalid",
       mindDir: "/tmp/x",
-      parentMind: "/tmp/parent",
     });
     assert.ok(result.error, "should return error for invalid type");
   });
 });
 
-// ── Upgrade Integration Tests ────────────────────────────────────────────────
+// ── Bundled Resources Existence Tests ────────────────────────────────────────
 
-describe("repo mind upgrade path", () => {
-  it("produces a registry compatible with upgrade.js diffRegistries", () => {
-    const parent = makeTempParent();
-    const mindDir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "upgrade-repo-")), "mind");
-
-    try {
-      const result = createMind({
-        ...TEST_CONFIG_BASE,
-        type: "repo",
-        mindDir,
-        parentMind: parent,
-      });
-      assert.ok(!result.error, `createMind failed: ${result.error}`);
-
-      // Read the created registry
-      const localRegistry = JSON.parse(
-        fs.readFileSync(path.join(mindDir, ".github", "registry.json"), "utf8")
-      );
-
-      // Simulate a remote registry with a bumped version
-      const remoteRegistry = JSON.parse(JSON.stringify(localRegistry));
-      remoteRegistry.extensions.cron.version = "0.2.0";
-
-      // Use upgrade.js diffRegistries
-      const { diffRegistries } = require("../upgrade/upgrade.js");
-      const diff = diffRegistries(localRegistry, remoteRegistry);
-
-      assert.ok(diff.updated.length === 1, "should detect one updated item");
-      assert.equal(diff.updated[0].name, "cron", "updated item should be cron");
-      assert.equal(diff.updated[0].localVersion, "0.1.4");
-      assert.equal(diff.updated[0].version, "0.2.0");
-    } finally {
-      cleanup(parent, path.dirname(mindDir));
-    }
-  });
-});
-
-describe("user mind upgrade path", () => {
-  it("produces a registry compatible with upgrade.js diffRegistries", () => {
-    const parent = makeTempParent();
-    const mindDir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "upgrade-user-")), "mind");
-    const userCopilotDir = fs.mkdtempSync(path.join(os.tmpdir(), "upgrade-copilot-"));
-
-    try {
-      const result = createMind({
-        ...TEST_CONFIG_BASE,
-        type: "user",
-        mindDir,
-        parentMind: parent,
-        userCopilotDir,
-      });
-      assert.ok(!result.error, `createMind failed: ${result.error}`);
-
-      // Read the user registry
-      const localRegistry = JSON.parse(
-        fs.readFileSync(path.join(userCopilotDir, "registry.json"), "utf8")
-      );
-
-      // Verify user-layout paths
-      assert.ok(!localRegistry.extensions.cron.path.includes(".github"),
-        "user registry should not have .github/ in paths");
-
-      // Simulate remote with a bumped skill
-      const remoteRegistry = JSON.parse(JSON.stringify(localRegistry));
-      remoteRegistry.skills.upgrade.version = "0.5.0";
-
-      const { diffRegistries } = require("../upgrade/upgrade.js");
-      const diff = diffRegistries(localRegistry, remoteRegistry);
-
-      assert.ok(diff.updated.length === 1, "should detect one updated item");
-      assert.equal(diff.updated[0].name, "upgrade");
-      assert.equal(diff.updated[0].version, "0.5.0");
-    } finally {
-      cleanup(parent, path.dirname(mindDir), userCopilotDir);
-    }
+describe("bundled resources", () => {
+  it("resources/upgrade/ directory exists in the skill", () => {
+    const skillRoot = path.join(__dirname);
+    const resourceDir = path.join(skillRoot, "resources", "upgrade");
+    assert.ok(fs.existsSync(resourceDir),
+      "resources/upgrade/ must exist in the skill directory");
+    assert.ok(fs.existsSync(path.join(resourceDir, "SKILL.md")),
+      "resources/upgrade/SKILL.md must exist");
+    assert.ok(fs.existsSync(path.join(resourceDir, "upgrade.js")),
+      "resources/upgrade/upgrade.js must exist");
   });
 });
