@@ -1,4 +1,24 @@
 node_modules/
+
+# Extensions — shared
+.github/extensions/*/node_modules/
+.github/extensions/*/package-lock.json
+.github/extensions/package-lock.json
+
+# Cron extension runtime data (local state, not version controlled)
+.github/extensions/cron/data/*/
+.github/extensions/cron/data/jobs/*.json
+.github/extensions/cron/data/history/*.json
+.github/extensions/cron/data/engine.lock
+.github/extensions/cron/data/engine.log
+
+# Canvas extension runtime data
+.github/extensions/canvas/data/content/
+!.github/extensions/canvas/data/content/test-canvas.html
+
+# Responses extension runtime data
+.github/extensions/responses/data/*/
+
 **/bin/Debug/
 **/bin/Release/
 **/obj/

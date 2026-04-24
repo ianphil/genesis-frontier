@@ -1,5 +1,5 @@
 {
-  "version": "0.7.0",
+  "version": "0.8.0",
   "source": "ianphil/genesis-frontier",
   "extensions": {
     "heartbeat": {
@@ -21,6 +21,26 @@
       "version": "0.1.0",
       "path": ".github/extensions/microui",
       "description": "Lightweight native WebView windows — cross-platform micro-UI over JSON Lines (WebView2/WKWebView/WebKitGTK)"
+    },
+    "canvas": {
+      "version": "0.1.3",
+      "path": ".github/extensions/canvas",
+      "description": "Display rich HTML content in the browser with SSE live reload"
+    },
+    "cron": {
+      "version": "0.4.0",
+      "path": ".github/extensions/cron",
+      "description": "Scheduled job execution — cron, interval, and one-shot with prompt and command payloads"
+    },
+    "idea": {
+      "version": "0.1.0",
+      "path": ".github/extensions/idea",
+      "description": "IDEA mind search — keyword, semantic recall, reindex, and health across Initiatives, Domains, Expertise, and Archive"
+    },
+    "responses": {
+      "version": "0.9.0",
+      "path": ".github/extensions/responses",
+      "description": "OpenAI Responses API–compatible HTTP server — XML message envelopes with sender identification via X-Agent-Name header"
     }
   },
   "skills": {
@@ -43,6 +63,21 @@
       "version": "0.1.0",
       "path": ".github/skills/generate-agent",
       "description": "Generate a Copilot CLI agent with a distinct personality — produces agent file + soul file at repo or user scope"
+    },
+    "packages": {
+      "version": "0.2.0",
+      "path": ".github/skills/packages",
+      "description": "Install, remove, and manage extensions and skills from third-party Genesis packages"
+    },
+    "upgrade": {
+      "version": "0.6.0",
+      "path": ".github/skills/upgrade",
+      "description": "Pull new extensions and skills from the genesis template registry; migrate channel-based registries to package-based"
+    },
+    "yellow-pages": {
+      "version": "0.1.0",
+      "path": ".github/skills/yellow-pages",
+      "description": "Agent directory and unified comms — send messages to local or remote agents via contacts.json registry"
     }
   },
   "prompts": {},
